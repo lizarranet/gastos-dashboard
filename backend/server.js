@@ -496,6 +496,534 @@ function normalizarGastosPeriodicos(rows, mes) {
   return result;
 }
 
+function createDiagnostic() {
+  return {
+    errores: [],
+    avisos: [],
+    info: [],
+    resumen: {
+      totalErrores: 0,
+      totalAvisos: 0,
+      estado: 'ok',
+    },
+  };
+}
+
+function addDiagnosticItem(diagnostico, type, code, message, context = {}) {
+  diagnostico[type].push({
+    code,
+    message,
+    context,
+  });
+}
+
+function finalizeDiagnostic(diagnostico) {
+  diagnostico.resumen.totalErrores = diagnostico.errores.length;
+  diagnostico.resumen.totalAvisos = diagnostico.avisos.length;
+  diagnostico.resumen.estado =
+    diagnostico.resumen.totalErrores > 0
+      ? 'error'
+      : diagnostico.resumen.totalAvisos > 0
+        ? 'revisar'
+        : 'ok';
+
+  return diagnostico;
+}
+
+function getObjectValue(obj, aliases, fallback = null) {
+  for (const alias of aliases) {
+    if (obj?.[alias] !== undefined && obj?.[alias] !== null && obj?.[alias] !== '') {
+      return obj[alias];
+    }
+  }
+
+  return fallback;
+}
+
+function getRowYearValue(item) {
+  return parseSafeNumber(getObjectValue(item, ['año', 'anio', 'Año', 'Anio']));
+}
+
+function getRowMonthValue(item) {
+  return parseSafeNumber(
+    getObjectValue(item, ['mes_num', 'mes_numero', 'mes_número', 'Mes_num'])
+  );
+}
+
+function getDashboardCategory(item) {
+  return getObjectValue(
+    item,
+    ['categoría', 'categoria', 'Categoría', 'Categoria'],
+    ''
+  );
+}
+
+function getDashboardGasto(item) {
+  return getObjectValue(
+    item,
+    ['gasto_real', 'gasto_real_mes', 'gasto_categoria_mes', 'gasto'],
+    null
+  );
+}
+
+function getDashboardPresupuesto(item) {
+  return getObjectValue(
+    item,
+    ['presupuesto', 'presupuesto_mes', 'presupuesto_categoria', 'presupuesto_categoria_mes'],
+    null
+  );
+}
+
+function getResumenGasto(item) {
+  return getObjectValue(
+    item,
+    ['gasto_total_mes', 'total_gastos_mes', 'gasto_total', 'gastos_mes', 'total_gastos', 'gasto_mes'],
+    null
+  );
+}
+
+function getResumenPresupuesto(item) {
+  return getObjectValue(
+    item,
+    ['presupuesto_gasto_max', 'presupuesto_total_mes', 'presupuesto_mes', 'total_presupuesto_mes', 'presupuesto_total'],
+    null
+  );
+}
+
+function isEmptyValue(value) {
+  return value === undefined || value === null || value === '';
+}
+
+function buildNormalizedRows(rows) {
+  if (!rows || rows.length < 2) return [];
+
+  const headers = rows[0].map((header) => ({
+    original: String(header ?? '').trim(),
+    normalized: normalizeHeader(header),
+  }));
+
+  return rows.slice(1).map((row, index) => {
+    const normalized = {};
+    const original = {};
+
+    headers.forEach((header, columnIndex) => {
+      const value = row[columnIndex] ?? '';
+      normalized[header.normalized] = value;
+      original[header.original] = value;
+    });
+
+    return {
+      fila: index + 2,
+      normalized,
+      original,
+    };
+  });
+}
+
+function diagnoseNumericField(diagnostico, source, rowNumber, fieldName, rawValue, options = {}) {
+  const { required = false, negativeIsWarning = true } = options;
+
+  if (isEmptyValue(rawValue)) {
+    if (required) {
+      addDiagnosticItem(
+        diagnostico,
+        'avisos',
+        'importe_vacio',
+        `${source}: el campo ${fieldName} está vacío`,
+        { fila: rowNumber, campo: fieldName }
+      );
+    }
+    return null;
+  }
+
+  const number = parseSafeNumber(rawValue);
+
+  if (number === null) {
+    addDiagnosticItem(
+      diagnostico,
+      'errores',
+      'importe_no_numerico',
+      `${source}: el campo ${fieldName} no es numérico`,
+      { fila: rowNumber, campo: fieldName, valor: rawValue }
+    );
+    return null;
+  }
+
+  if (number < 0) {
+    addDiagnosticItem(
+      diagnostico,
+      negativeIsWarning ? 'avisos' : 'errores',
+      'importe_negativo',
+      `${source}: el campo ${fieldName} tiene importe negativo`,
+      { fila: rowNumber, campo: fieldName, valor: number }
+    );
+  }
+
+  return number;
+}
+
+function diagnoseDashboardRows(diagnostico, dashboard, anio, mes) {
+  const dashboardFiltrado = dashboard.filter((item) => {
+    const year = getRowYearValue(item);
+    const month = getRowMonthValue(item);
+
+    if (anio !== null && year !== anio) return false;
+    if (mes !== null && month !== mes) return false;
+
+    return true;
+  });
+
+  if ((anio !== null || mes !== null) && dashboardFiltrado.length === 0) {
+    addDiagnosticItem(
+      diagnostico,
+      'avisos',
+      'sin_datos_dashboard_periodo',
+      'No hay filas en API_Dashboard para el periodo solicitado',
+      { anio, mes }
+    );
+  }
+
+  const categoriasPorClave = new Map();
+
+  dashboardFiltrado.forEach((item, index) => {
+    const fila = index + 2;
+    const categoria = getDashboardCategory(item);
+    const categoriaNormalizada = normalizeText(categoria).replace(/[^a-z0-9]/g, '');
+    const gastoRaw = getDashboardGasto(item);
+    const presupuestoRaw = getDashboardPresupuesto(item);
+    const gasto = diagnoseNumericField(
+      diagnostico,
+      'API_Dashboard',
+      fila,
+      'gasto',
+      gastoRaw
+    );
+    const presupuesto = diagnoseNumericField(
+      diagnostico,
+      'API_Dashboard',
+      fila,
+      'presupuesto',
+      presupuestoRaw
+    );
+
+    if (!categoria || !String(categoria).trim()) {
+      addDiagnosticItem(
+        diagnostico,
+        'errores',
+        'categoria_vacia',
+        'API_Dashboard: hay una fila sin categoría',
+        { fila }
+      );
+    } else if (categoriaNormalizada) {
+      const current = categoriasPorClave.get(categoriaNormalizada) ?? [];
+      current.push(String(categoria).trim());
+      categoriasPorClave.set(categoriaNormalizada, current);
+    }
+
+    if (gasto !== null && gasto > 0 && (presupuesto === null || presupuesto === 0)) {
+      addDiagnosticItem(
+        diagnostico,
+        anio !== null && anio >= 2026 ? 'errores' : 'avisos',
+        'categoria_con_gasto_sin_presupuesto',
+        'API_Dashboard: categoría con gasto pero presupuesto cero o ausente',
+        { fila, categoria, gasto, presupuesto }
+      );
+    }
+  });
+
+  categoriasPorClave.forEach((variants, key) => {
+    const uniqueVariants = [...new Set(variants)];
+
+    if (uniqueVariants.length > 1) {
+      addDiagnosticItem(
+        diagnostico,
+        'avisos',
+        'categoria_duplicada_normalizada',
+        'API_Dashboard: posibles categorías duplicadas por variaciones de escritura',
+        { clave: key, variantes: uniqueVariants }
+      );
+    }
+  });
+
+  addDiagnosticItem(
+    diagnostico,
+    'info',
+    'filas_dashboard_analizadas',
+    'Filas de API_Dashboard analizadas',
+    { total: dashboardFiltrado.length, anio, mes }
+  );
+
+  return dashboardFiltrado;
+}
+
+function diagnoseResumenRows(diagnostico, resumen, anio, mes) {
+  const resumenFiltrado = resumen.filter((item) => {
+    const year = getRowYearValue(item);
+    const month = getRowMonthValue(item);
+
+    if (anio !== null && year !== anio) return false;
+    if (mes !== null && month !== mes) return false;
+
+    return true;
+  });
+
+  if ((anio !== null || mes !== null) && resumenFiltrado.length === 0) {
+    addDiagnosticItem(
+      diagnostico,
+      'avisos',
+      'sin_datos_resumen_periodo',
+      'No hay filas en API_Resumen para el periodo solicitado',
+      { anio, mes }
+    );
+  }
+
+  resumenFiltrado.forEach((item, index) => {
+    const fila = index + 2;
+    const gasto = diagnoseNumericField(
+      diagnostico,
+      'API_Resumen',
+      fila,
+      'gasto_total_mes',
+      getResumenGasto(item)
+    );
+    const presupuesto = diagnoseNumericField(
+      diagnostico,
+      'API_Resumen',
+      fila,
+      'presupuesto_gasto_max',
+      getResumenPresupuesto(item)
+    );
+
+    if (gasto !== null && gasto > 0 && (presupuesto === null || presupuesto === 0)) {
+      addDiagnosticItem(
+        diagnostico,
+        anio !== null && anio >= 2026 ? 'errores' : 'avisos',
+        'anio_con_gasto_sin_presupuesto',
+        'API_Resumen: hay gasto mensual pero presupuesto ausente o cero',
+        { fila, anio: getRowYearValue(item), mes: getRowMonthValue(item), gasto, presupuesto }
+      );
+    }
+  });
+
+  if (anio !== null && mes === null) {
+    const months = [...new Set(
+      resumen
+        .filter((item) => getRowYearValue(item) === anio)
+        .map((item) => getRowMonthValue(item))
+        .filter((value) => value !== null)
+    )].sort((a, b) => a - b);
+
+    if (months.length === 0) {
+      addDiagnosticItem(
+        diagnostico,
+        'avisos',
+        'anio_sin_resumen',
+        'API_Resumen no contiene meses para el año solicitado',
+        { anio }
+      );
+    } else {
+      const minMonth = months[0];
+      const maxMonth = months[months.length - 1];
+      const missingMonths = [];
+
+      for (let month = minMonth; month <= maxMonth; month += 1) {
+        if (!months.includes(month)) missingMonths.push(month);
+      }
+
+      if (missingMonths.length > 0) {
+        addDiagnosticItem(
+          diagnostico,
+          'avisos',
+          'meses_intermedios_faltantes',
+          'API_Resumen tiene huecos entre meses existentes del año',
+          { anio, mesesFaltantes: missingMonths, mesesConDatos: months }
+        );
+      }
+    }
+  }
+
+  addDiagnosticItem(
+    diagnostico,
+    'info',
+    'filas_resumen_analizadas',
+    'Filas de API_Resumen analizadas',
+    { total: resumenFiltrado.length, anio, mes }
+  );
+
+  return resumenFiltrado;
+}
+
+function diagnoseGastosPeriodicosRows(diagnostico, rows, mes) {
+  const normalizedRows = buildNormalizedRows(rows);
+
+  normalizedRows.forEach((row) => {
+    const mesRaw = getNormalizedField(row.normalized, ['mes_num', 'mes numero', 'mes número']);
+    const mesNum = diagnoseNumericField(
+      diagnostico,
+      'API_GastosPeriodicos',
+      row.fila,
+      'mes_num',
+      mesRaw,
+      { required: true, negativeIsWarning: false }
+    );
+
+    if (mes !== null && mesNum !== mes) return;
+
+    const concepto = getNormalizedField(row.normalized, ['concepto'], '');
+    const quien = getNormalizedField(row.normalized, ['quien', 'quién'], '');
+    const totalRaw = getNormalizedField(row.normalized, ['total']);
+    const estado = getNormalizedField(row.normalized, ['estado'], '');
+    const quienNormalizado = normalizeText(quien);
+    const estadoNormalizado = normalizeText(estado);
+
+    if (!concepto || !String(concepto).trim()) {
+      addDiagnosticItem(
+        diagnostico,
+        'avisos',
+        'gasto_periodico_sin_concepto',
+        'API_GastosPeriodicos: fila sin concepto',
+        { fila: row.fila }
+      );
+    }
+
+    if (!quien || !String(quien).trim()) {
+      addDiagnosticItem(
+        diagnostico,
+        'avisos',
+        'gasto_periodico_sin_quien',
+        'API_GastosPeriodicos: fila sin quién',
+        { fila: row.fila, concepto }
+      );
+    } else if (!['comun', 'porcentaje'].includes(quienNormalizado)) {
+      addDiagnosticItem(
+        diagnostico,
+        'avisos',
+        'gasto_periodico_quien_no_valido',
+        'API_GastosPeriodicos: quién no es común ni porcentaje',
+        { fila: row.fila, concepto, quien }
+      );
+    }
+
+    if (!estado || !String(estado).trim()) {
+      addDiagnosticItem(
+        diagnostico,
+        'avisos',
+        'gasto_periodico_sin_estado',
+        'API_GastosPeriodicos: estado vacío, el backend lo tratará como Pendiente',
+        { fila: row.fila, concepto }
+      );
+    } else if (!['pendiente', 'ejecutado'].includes(estadoNormalizado)) {
+      addDiagnosticItem(
+        diagnostico,
+        'avisos',
+        'gasto_periodico_estado_no_valido',
+        'API_GastosPeriodicos: estado no reconocido',
+        { fila: row.fila, concepto, estado }
+      );
+    }
+
+    diagnoseNumericField(
+      diagnostico,
+      'API_GastosPeriodicos',
+      row.fila,
+      'total',
+      totalRaw,
+      { required: true, negativeIsWarning: false }
+    );
+  });
+
+  const normalized = normalizarGastosPeriodicos(rows, mes);
+
+  addDiagnosticItem(
+    diagnostico,
+    'info',
+    'gastos_periodicos_normalizados',
+    'GASTOS_PERIODICOS se valida usando TOTAL; MIKEL no se usa para el cálculo familiar',
+    {
+      itemsValidos: normalized.items.length,
+      totalPendiente: normalized.totalPendiente,
+      totalEjecutado: normalized.totalEjecutado,
+      descartados: normalized.descartados.length,
+    }
+  );
+}
+
+function diagnoseCrossSheetConsistency(diagnostico, resumenFiltrado, dashboardFiltrado, anio, mes) {
+  const tolerance = 1;
+
+  resumenFiltrado.forEach((resumenItem) => {
+    const year = getRowYearValue(resumenItem);
+    const month = getRowMonthValue(resumenItem);
+    const matchingDashboard = dashboardFiltrado.filter(
+      (item) => getRowYearValue(item) === year && getRowMonthValue(item) === month
+    );
+
+    if (matchingDashboard.length === 0) {
+      addDiagnosticItem(
+        diagnostico,
+        'avisos',
+        'sin_dashboard_para_resumen',
+        'No se puede comparar API_Resumen con API_Dashboard para este periodo',
+        { anio: year, mes: month }
+      );
+      return;
+    }
+
+    const resumenGasto = parseSafeNumber(getResumenGasto(resumenItem));
+    const resumenPresupuesto = parseSafeNumber(getResumenPresupuesto(resumenItem));
+    const sumaGasto = roundCurrency(
+      matchingDashboard.reduce((sum, item) => sum + (parseSafeNumber(getDashboardGasto(item)) ?? 0), 0)
+    );
+    const sumaPresupuesto = roundCurrency(
+      matchingDashboard.reduce((sum, item) => sum + (parseSafeNumber(getDashboardPresupuesto(item)) ?? 0), 0)
+    );
+
+    if (resumenGasto === null) {
+      addDiagnosticItem(
+        diagnostico,
+        'avisos',
+        'comparacion_gasto_no_fiable',
+        'No se puede comparar gasto total porque API_Resumen no tiene gasto numérico',
+        { anio: year, mes: month }
+      );
+    } else if (Math.abs(resumenGasto - sumaGasto) > tolerance) {
+      addDiagnosticItem(
+        diagnostico,
+        'avisos',
+        'gasto_resumen_no_cuadra_con_dashboard',
+        'El gasto total de API_Resumen no cuadra con la suma de categorías de API_Dashboard',
+        { anio: year, mes: month, resumen: resumenGasto, sumaCategorias: sumaGasto }
+      );
+    }
+
+    if (resumenPresupuesto === null) {
+      addDiagnosticItem(
+        diagnostico,
+        'avisos',
+        'comparacion_presupuesto_no_fiable',
+        'No se puede comparar presupuesto porque API_Resumen no tiene presupuesto numérico',
+        { anio: year, mes: month }
+      );
+    } else if (Math.abs(resumenPresupuesto - sumaPresupuesto) > tolerance) {
+      addDiagnosticItem(
+        diagnostico,
+        'avisos',
+        'presupuesto_resumen_no_cuadra_con_dashboard',
+        'El presupuesto mensual de API_Resumen no cuadra con la suma de presupuestos por categoría',
+        { anio: year, mes: month, resumen: resumenPresupuesto, sumaCategorias: sumaPresupuesto }
+      );
+    }
+  });
+
+  addDiagnosticItem(
+    diagnostico,
+    'info',
+    'comparacion_entre_hojas',
+    'Comparación entre API_Resumen y API_Dashboard completada con tolerancia de 1 €',
+    { anio, mes, tolerancia: tolerance }
+  );
+}
+
 app.get('/api/resumen', async (req, res) => {
   try {
     const rows = await readSheet('API_Resumen!A:Z');
@@ -629,6 +1157,57 @@ app.get('/api/config', async (req, res) => {
     });
   } catch (error) {
     return handleEndpointError(res, error, 'No se pudo cargar la configuración');
+  }
+});
+
+app.get('/api/diagnostico-datos', async (req, res) => {
+  try {
+    const { anio, mes } = req.query;
+    const anioValidado = validateOptionalYear(anio);
+    const mesValidado = validateOptionalMonth(mes);
+
+    if (!anioValidado.ok) return sendApiError(res, 400, anioValidado.error);
+    if (!mesValidado.ok) return sendApiError(res, 400, mesValidado.error);
+
+    const anioFiltro = anioValidado.value;
+    const mesFiltro = mesValidado.value;
+    const diagnostico = createDiagnostic();
+    const [resumenRows, dashboardRows, gastosPeriodicosRows] = await Promise.all([
+      readSheet('API_Resumen!A:Z'),
+      readSheet('API_Dashboard!A:Z'),
+      readSheet('API_GastosPeriodicos!A:Z'),
+    ]);
+    const resumen = rowsToObjects(resumenRows);
+    const dashboard = rowsToObjects(dashboardRows);
+
+    const resumenFiltrado = diagnoseResumenRows(
+      diagnostico,
+      resumen,
+      anioFiltro,
+      mesFiltro
+    );
+    const dashboardFiltrado = diagnoseDashboardRows(
+      diagnostico,
+      dashboard,
+      anioFiltro,
+      mesFiltro
+    );
+
+    diagnoseGastosPeriodicosRows(diagnostico, gastosPeriodicosRows, mesFiltro);
+    diagnoseCrossSheetConsistency(
+      diagnostico,
+      resumenFiltrado,
+      dashboardFiltrado,
+      anioFiltro,
+      mesFiltro
+    );
+
+    res.json({
+      success: true,
+      diagnostico: finalizeDiagnostic(diagnostico),
+    });
+  } catch (error) {
+    return handleEndpointError(res, error, 'No se pudo generar el diagnóstico de datos');
   }
 });
 
