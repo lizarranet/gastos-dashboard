@@ -33,6 +33,7 @@ function getApiBaseUrl() {
 const API_BASE_URL = getApiBaseUrl()
 const API_URL = `${API_BASE_URL}/app-state`
 const MEDIAS_CATEGORIA_URL = `${API_BASE_URL}/medias-categoria`
+const DIAGNOSTICO_DATOS_URL = `${API_BASE_URL}/diagnostico-datos`
 
 const MONTH_NAMES = [
   'Enero',
@@ -387,10 +388,105 @@ function CollapsibleSection({ title, description, helpText, open, onToggle, chil
   )
 }
 
+function DataStatusPanel({ diagnostico, loading, error, open, onToggle }) {
+  const resumen = diagnostico?.resumen
+  const estado = resumen?.estado ?? 'ok'
+  const errores = diagnostico?.errores ?? []
+  const avisos = diagnostico?.avisos ?? []
+  const info = diagnostico?.info ?? []
+  const statusLabel =
+    error
+      ? 'No comprobado'
+      : loading
+        ? 'Comprobando'
+        : estado === 'error'
+          ? 'Error'
+          : estado === 'revisar'
+            ? 'Revisar'
+            : 'OK'
+  const statusMessage =
+    error
+      ? 'No se pudo comprobar el estado de datos'
+      : loading
+        ? 'Comprobando estado de datos...'
+        : estado === 'ok'
+          ? 'Datos sin incidencias relevantes.'
+          : estado === 'error'
+            ? 'Hay errores de datos que conviene revisar.'
+            : 'Hay avisos de datos pendientes de revisión.'
+
+  function renderItems(title, items) {
+    if (!items.length) return null
+
+    return (
+      <div className="data-status-group">
+        <h3>{title}</h3>
+        <ul>
+          {items.slice(0, 6).map((item, index) => (
+            <li key={`${title}-${item.code}-${index}`}>
+              <strong>{item.message}</strong>
+              {item.context?.anio && <span>Año {item.context.anio}</span>}
+              {item.context?.mes && <span>Mes {item.context.mes}</span>}
+              {item.context?.total !== undefined && <span>Total {item.context.total}</span>}
+              {item.context?.totalPendiente !== undefined && (
+                <span>Pendiente {formatCurrency(item.context.totalPendiente)}</span>
+              )}
+              {item.context?.itemsValidos !== undefined && (
+                <span>Filas válidas {item.context.itemsValidos}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+        {items.length > 6 && (
+          <p className="data-status-more">+{items.length - 6} elementos más</p>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <section className={`data-status-panel data-status-${estado} ${error ? 'data-status-unavailable' : ''}`}>
+      <button type="button" className="data-status-summary" onClick={onToggle}>
+        <div>
+          <span className="data-status-eyebrow">Estado de datos</span>
+          <strong>{statusLabel}</strong>
+          <p>{statusMessage}</p>
+        </div>
+        <div className="data-status-counts">
+          <span>{resumen?.totalErrores ?? 0} errores</span>
+          <span>{resumen?.totalAvisos ?? 0} avisos</span>
+          <i>{open ? 'Ocultar' : 'Ver'}</i>
+        </div>
+      </button>
+
+      {open && (
+        <div className="data-status-details">
+          {error ? (
+            <p className="data-status-empty">No se pudo comprobar el estado de datos.</p>
+          ) : (
+            <>
+              {renderItems('Errores', errores)}
+              {renderItems('Avisos', avisos)}
+              {renderItems('Info', info)}
+              {!errores.length && !avisos.length && (
+                <p className="data-status-empty">Datos sin incidencias relevantes.</p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function App() {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [diagnostico, setDiagnostico] = useState(null)
+  const [diagnosticoLoading, setDiagnosticoLoading] = useState(false)
+  const [diagnosticoError, setDiagnosticoError] = useState(false)
+  const [diagnosticoOpen, setDiagnosticoOpen] = useState(false)
   const [selectedAnio, setSelectedAnio] = useState('')
   const [selectedMes, setSelectedMes] = useState('')
   const [openSections, setOpenSections] = useState({
@@ -452,6 +548,32 @@ function App() {
       })
   }
 
+  function fetchDiagnosticoDatos(anioFiltro, mesFiltro) {
+    if (!anioFiltro && !mesFiltro) return
+
+    const params = {}
+
+    if (anioFiltro) params.anio = anioFiltro
+    if (mesFiltro) params.mes = mesFiltro
+
+    setDiagnosticoLoading(true)
+    setDiagnosticoError(false)
+
+    axios
+      .get(DIAGNOSTICO_DATOS_URL, { params })
+      .then((response) => {
+        setDiagnostico(response.data?.diagnostico ?? null)
+      })
+      .catch((error) => {
+        console.error(error)
+        setDiagnostico(null)
+        setDiagnosticoError(true)
+      })
+      .finally(() => {
+        setDiagnosticoLoading(false)
+      })
+  }
+
   useEffect(() => {
     fetchAppState()
   }, [])
@@ -460,6 +582,12 @@ function App() {
     const anio = data?.filtros?.anio
     if (anio) fetchMediasCategoria(anio)
   }, [data?.filtros?.anio])
+
+  useEffect(() => {
+    const anio = data?.filtros?.anio
+    const mes = data?.filtros?.mes
+    if (anio || mes) fetchDiagnosticoDatos(anio, mes)
+  }, [data?.filtros?.anio, data?.filtros?.mes])
 
   const dashboard = data?.dashboard ?? []
   const resumen = data?.resumen ?? []
@@ -1320,6 +1448,14 @@ ${JSON.stringify(payload, null, 2)}`
             </button>
           </div>
         </section>
+
+        <DataStatusPanel
+          diagnostico={diagnostico}
+          loading={diagnosticoLoading}
+          error={diagnosticoError}
+          open={diagnosticoOpen}
+          onToggle={() => setDiagnosticoOpen((current) => !current)}
+        />
 
         {noData ? (
           <>
