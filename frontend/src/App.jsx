@@ -365,6 +365,42 @@ function CustomTooltip({ active, payload, label }) {
   )
 }
 
+function HelpTooltip({ text, label = 'Ayuda', className = '' }) {
+  const [open, setOpen] = useState(false)
+
+  function handleClick(event) {
+    event.stopPropagation()
+    setOpen((current) => !current)
+  }
+
+  return (
+    <span className={`help-tooltip ${open ? 'is-open' : ''} ${className}`}>
+      <button
+        type="button"
+        className="help-tooltip-button"
+        onClick={handleClick}
+        onBlur={() => setOpen(false)}
+        aria-label={label}
+        aria-expanded={open}
+      >
+        ?
+      </button>
+      <span className="help-tooltip-content" role="tooltip">
+        {text}
+      </span>
+    </span>
+  )
+}
+
+function CardLabel({ children, help }) {
+  return (
+    <p className="card-label">
+      <span>{children}</span>
+      {help && <HelpTooltip text={help} label={`Ayuda: ${children}`} />}
+    </p>
+  )
+}
+
 
 function CollapsibleSection({ title, description, helpText, open, onToggle, children }) {
   const [helpOpen, setHelpOpen] = useState(false)
@@ -476,6 +512,11 @@ function DataStatusPanel({ diagnostico, loading, error, open, onToggle }) {
 
   return (
     <section className={`data-status-panel data-status-${estado} ${error ? 'data-status-unavailable' : ''}`}>
+      <HelpTooltip
+        className="data-status-help"
+        text="Comprueba si las hojas técnicas tienen errores, avisos o datos pendientes de revisar."
+        label="Ayuda: Estado de datos"
+      />
       <button type="button" className="data-status-summary" onClick={onToggle}>
         <div>
           <span className="data-status-eyebrow">Estado de datos</span>
@@ -1824,35 +1865,47 @@ ${JSON.stringify(payload, null, 2)}
               <section className="periodic-section">
                 <div className="periodic-summary-grid">
                   <article className="card priority-card">
-                    <p>Aportación prevista</p>
+                    <CardLabel help="Dinero previsto para el mes en el fondo común familiar.">
+                      Aportación prevista
+                    </CardLabel>
                     <h2>{formatCurrency(ingresoPrevistoGastosPeriodicos)}</h2>
                   </article>
 
                   <article className={totalGastosPeriodicosPendientes > 0 ? 'card bad priority-card priority-warning' : 'card good priority-card'}>
-                    <p>Gastos periódicos pendientes</p>
+                    <CardLabel help="Gastos comunes previstos para este mes que aún no se han ejecutado. Reducen el margen real disponible.">
+                      Gastos periódicos pendientes
+                    </CardLabel>
                     <h2>{formatCurrency(totalGastosPeriodicosPendientes)}</h2>
                   </article>
 
                   <article className="card">
-                    <p>Ya ejecutados</p>
+                    <CardLabel help="Gastos periódicos del mes que ya se han pagado. Ya están absorbidos en el gasto real y no se restan otra vez.">
+                      Ya ejecutados
+                    </CardLabel>
                     <h2>{formatCurrency(totalGastosPeriodicosEjecutados)}</h2>
                   </article>
 
                   <article className="card good priority-card priority-good">
-                    <p>Disponible gasto ordinario</p>
+                    <CardLabel help="Aportación prevista menos gastos periódicos pendientes. Indica el margen real para el gasto normal del mes.">
+                      Disponible gasto ordinario
+                    </CardLabel>
                     <h2>{formatCurrency(presupuestoOrdinarioDisponible)}</h2>
                     <span className="card-note">AportaciÃ³n prevista menos gastos periÃ³dicos pendientes.</span>
                   </article>
 
                   <article className={balanceAjustadoPreventivo >= 0 ? 'card good priority-card' : 'card bad priority-card'}>
-                    <p>Balance ajustado preventivo</p>
+                    <CardLabel help="Balance del mes descontando los gastos periódicos pendientes. Sirve como aviso anticipado.">
+                      Balance ajustado preventivo
+                    </CardLabel>
                     <h2 className={balanceAjustadoPreventivoClass}>
                       {formatSignedCurrency(balanceAjustadoPreventivo)}
                     </h2>
                   </article>
 
                   <article className="card">
-                    <p>Uso del disponible</p>
+                    <CardLabel help="Porcentaje del margen ordinario disponible que ya se ha consumido.">
+                      Uso del disponible
+                    </CardLabel>
                     <h2 className={disponibleClass}>{formatPercent(porcentajeDisponibleConsumido)}</h2>
                   </article>
                 </div>
@@ -1924,22 +1977,30 @@ ${JSON.stringify(payload, null, 2)}
             >
               <section className="cards-grid">
                 <article className="card priority-card">
-                  <p>Ingresos mes</p>
+                  <CardLabel help="Dinero previsto o registrado como entrada para el mes en el fondo común familiar.">
+                    Ingresos mes
+                  </CardLabel>
                   <h2>{formatCurrency(ingresosMes)}</h2>
                 </article>
 
                 <article className="card priority-card">
-                  <p>Gastos mes</p>
+                  <CardLabel help="Suma de los gastos registrados del mes.">
+                    Gasto real
+                  </CardLabel>
                   <h2>{formatCurrency(gastoTotal)}</h2>
                 </article>
 
                 <article className={balanceEsPositivo ? 'card good priority-card' : 'card bad priority-card'}>
-                  <p>Balance</p>
+                  <CardLabel help="Diferencia entre aportación/ingresos previstos y gasto real.">
+                    Balance
+                  </CardLabel>
                   <h2>{formatCurrency(balanceMesCalculado)}</h2>
                 </article>
 
                 <article className="card">
-                  <p>Presupuesto usado</p>
+                  <CardLabel help="Indica qué parte del presupuesto mensual se ha consumido.">
+                    Presupuesto usado
+                  </CardLabel>
                   <h2>{formatPercent(porcentajePresupuesto)}</h2>
                 </article>
               </section>
@@ -1975,35 +2036,47 @@ ${JSON.stringify(payload, null, 2)}
               <section className="periodic-section">
                 <div className="periodic-summary-grid">
                   <article className="card priority-card">
-                    <p>Aportación prevista</p>
+                    <CardLabel help="Dinero previsto para el mes en el fondo común familiar.">
+                      Aportación prevista
+                    </CardLabel>
                     <h2>{formatCurrency(ingresoPrevistoGastosPeriodicos)}</h2>
                   </article>
 
                   <article className={totalGastosPeriodicosPendientes > 0 ? 'card bad priority-card priority-warning' : 'card good priority-card'}>
-                    <p>Gastos periódicos pendientes</p>
+                    <CardLabel help="Gastos comunes previstos para este mes que aún no se han ejecutado. Reducen el margen real disponible.">
+                      Gastos periódicos pendientes
+                    </CardLabel>
                     <h2>{formatCurrency(totalGastosPeriodicosPendientes)}</h2>
                   </article>
 
                   <article className="card">
-                    <p>Ya ejecutados</p>
+                    <CardLabel help="Gastos periódicos del mes que ya se han pagado. Ya están absorbidos en el gasto real y no se restan otra vez.">
+                      Ya ejecutados
+                    </CardLabel>
                     <h2>{formatCurrency(totalGastosPeriodicosEjecutados)}</h2>
                   </article>
 
                   <article className="card good priority-card priority-good">
-                    <p>Disponible gasto ordinario</p>
+                    <CardLabel help="Aportación prevista menos gastos periódicos pendientes. Indica el margen real para el gasto normal del mes.">
+                      Disponible gasto ordinario
+                    </CardLabel>
                     <h2>{formatCurrency(presupuestoOrdinarioDisponible)}</h2>
                     <span className="card-note">AportaciÃ³n prevista menos gastos periÃ³dicos pendientes.</span>
                   </article>
 
                   <article className={balanceAjustadoPreventivo >= 0 ? 'card good priority-card' : 'card bad priority-card'}>
-                    <p>Balance ajustado preventivo</p>
+                    <CardLabel help="Balance del mes descontando los gastos periódicos pendientes. Sirve como aviso anticipado.">
+                      Balance ajustado preventivo
+                    </CardLabel>
                     <h2 className={balanceAjustadoPreventivoClass}>
                       {formatSignedCurrency(balanceAjustadoPreventivo)}
                     </h2>
                   </article>
 
                   <article className="card">
-                    <p>Uso del disponible</p>
+                    <CardLabel help="Porcentaje del margen ordinario disponible que ya se ha consumido.">
+                      Uso del disponible
+                    </CardLabel>
                     <h2 className={disponibleClass}>{formatPercent(porcentajeDisponibleConsumido)}</h2>
                   </article>
                 </div>
@@ -2071,7 +2144,13 @@ ${JSON.stringify(payload, null, 2)}
               <section className="charts-grid">
               <article className="chart-card chart-card-wide">
                 <div className="chart-header">
-                  <h2>Gasto real vs presupuesto</h2>
+                  <h2 className="inline-help-heading">
+                    <span>Gasto real vs presupuesto</span>
+                    <HelpTooltip
+                      text="El presupuesto es el presupuesto base previsto para el mes antes de ajustes puntuales."
+                      label="Ayuda: Presupuesto"
+                    />
+                  </h2>
                   <p>Comparativa mensual por categoría.</p>
                 </div>
 
@@ -2680,7 +2759,13 @@ ${JSON.stringify(payload, null, 2)}
           <section className="ai-analysis-section">
             <article className="ai-analysis-card">
               <div>
-                <h2>Generador de informes familiares</h2>
+                <h2 className="inline-help-heading">
+                  <span>Generador de informes familiares</span>
+                  <HelpTooltip
+                    text="Genera un prompt con los datos relevantes para que ChatGPT prepare un informe familiar interpretado."
+                    label="Ayuda: Informes IA"
+                  />
+                </h2>
                 <p>
                   Crea un prompt con datos del periodo actual, diagnóstico de datos, categorías relevantes,
                   histórico disponible y previsión del mes siguiente. Después pégalo manualmente en ChatGPT.

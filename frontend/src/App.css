@@ -473,6 +473,120 @@ h1 {
   font-weight: 800;
 }
 
+.card-label,
+.inline-help-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.card-label {
+  justify-content: space-between;
+}
+
+.inline-help-heading {
+  align-items: center;
+}
+
+.help-tooltip {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  z-index: 5;
+}
+
+.help-tooltip-button {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.help-tooltip-button:hover,
+.help-tooltip-button:focus-visible,
+.help-tooltip.is-open .help-tooltip-button {
+  border-color: #2563eb;
+  background: #eff6ff;
+  outline: none;
+}
+
+.help-tooltip-content {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: min(260px, calc(100vw - 36px));
+  padding: 10px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #1e3a8a;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.18);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  white-space: normal;
+}
+
+.help-tooltip-content::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  border-right: 1px solid #dbeafe;
+  border-bottom: 1px solid #dbeafe;
+  background: #ffffff;
+  transform: rotate(45deg);
+}
+
+.help-tooltip:hover .help-tooltip-content,
+.help-tooltip:focus-within .help-tooltip-content,
+.help-tooltip.is-open .help-tooltip-content {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.data-status-panel {
+  position: relative;
+}
+
+.data-status-help {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+}
+
+.data-status-panel .data-status-summary {
+  padding-right: 56px;
+}
+
+.data-status-help .help-tooltip-content {
+  bottom: auto;
+  top: calc(100% + 8px);
+}
+
+.data-status-help .help-tooltip-content::after {
+  top: -6px;
+  bottom: auto;
+  border: 0;
+  border-left: 1px solid #dbeafe;
+  border-top: 1px solid #dbeafe;
+}
+
 .card h2 {
   margin: 0;
   color: #061733;
@@ -1043,6 +1157,26 @@ tbody tr.row-unknown td {
 
   .priority-card h2 {
     font-size: 28px;
+  }
+
+  .help-tooltip-button {
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
+  }
+
+  .help-tooltip-content {
+    width: min(280px, calc(100vw - 28px));
+    font-size: 12px;
+  }
+
+  .card-label {
+    gap: 10px;
+  }
+
+  .data-status-help {
+    top: 10px;
+    right: 12px;
   }
 
   .filters-card {
