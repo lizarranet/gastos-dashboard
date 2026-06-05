@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
 import {
   Bar,
@@ -238,6 +238,21 @@ function getMostRecentPeriod(periods) {
     .sort((a, b) => b.year * 12 + b.month - (a.year * 12 + a.month))[0] ?? null
 }
 
+function getCurrentDashboardPeriod(metadata = {}) {
+  return getMostRecentPeriod([
+    getCalendarPeriod(),
+    getPeriodFromIsoDate(metadata.fechaUltimoApunte),
+  ])
+}
+
+function normalizeCategoryKey(value) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+}
+
 function getRowYear(item) {
   return toNumber(getValue(item, ['año', 'anio', 'Año', 'Anio']))
 }
@@ -367,15 +382,58 @@ function CustomTooltip({ active, payload, label }) {
 
 function HelpTooltip({ text, label = 'Ayuda', className = '' }) {
   const [open, setOpen] = useState(false)
+  const [position, setPosition] = useState(null)
+  const buttonRef = useRef(null)
+
+  function updatePosition() {
+    if (!buttonRef.current || typeof window === 'undefined') return
+
+    const rect = buttonRef.current.getBoundingClientRect()
+    const margin = 14
+    const width = Math.min(280, window.innerWidth - margin * 2)
+    const placement = rect.top < 120 ? 'bottom' : 'top'
+    const left = Math.min(
+      Math.max(margin, rect.right - width),
+      Math.max(margin, window.innerWidth - width - margin),
+    )
+    const top = placement === 'bottom' ? rect.bottom + 8 : rect.top - 8
+
+    setPosition({
+      left,
+      top,
+      width,
+      placement,
+    })
+  }
+
+  useEffect(() => {
+    if (!open) return undefined
+
+    updatePosition()
+
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [open])
 
   function handleClick(event) {
     event.stopPropagation()
+    updatePosition()
     setOpen((current) => !current)
   }
 
   return (
-    <span className={`help-tooltip ${open ? 'is-open' : ''} ${className}`}>
+    <span
+      className={`help-tooltip ${open ? 'is-open' : ''} ${className}`}
+      onMouseEnter={updatePosition}
+      onFocus={updatePosition}
+    >
       <button
+        ref={buttonRef}
         type="button"
         className="help-tooltip-button"
         onClick={handleClick}
@@ -385,7 +443,20 @@ function HelpTooltip({ text, label = 'Ayuda', className = '' }) {
       >
         ?
       </button>
-      <span className="help-tooltip-content" role="tooltip">
+      <span
+        className="help-tooltip-content"
+        role="tooltip"
+        data-placement={position?.placement ?? 'top'}
+        style={
+          position
+            ? {
+                '--help-tooltip-left': `${position.left}px`,
+                '--help-tooltip-top': `${position.top}px`,
+                '--help-tooltip-width': `${position.width}px`,
+              }
+            : undefined
+        }
+      >
         {text}
       </span>
     </span>
@@ -667,6 +738,13 @@ function App() {
   }
 
   useEffect(() => {
+    const targetPeriod = getCurrentDashboardPeriod()
+
+    if (targetPeriod) {
+      fetchAppState(targetPeriod.year, targetPeriod.month)
+      return
+    }
+
     fetchAppState()
   }, [])
 
@@ -692,6 +770,30 @@ function App() {
   const metadata = data?.metadata ?? {}
   const gastosPeriodicos = data?.gastosPeriodicos ?? []
   const gastosPeriodicosResumen = data?.gastosPeriodicosResumen ?? {}
+  const gastosPeriodicosPorCategoria = useMemo(() => {
+    const resumenCategorias =
+      data?.gastosPeriodicosPorCategoria ??
+      gastosPeriodicosResumen.gastosPeriodicosPorCategoria ??
+      []
+    const mapa = new Map()
+
+    resumenCategorias.forEach((item) => {
+      const categoria = item?.categoria
+      const key = normalizeCategoryKey(categoria)
+
+      if (!key) return
+
+      mapa.set(key, {
+        categoria,
+        totalPendiente: toNumber(item.totalPendiente) ?? 0,
+        totalEjecutado: toNumber(item.totalEjecutado) ?? 0,
+        totalMes: toNumber(item.totalMes) ?? 0,
+        conceptos: item.conceptos ?? [],
+      })
+    })
+
+    return mapa
+  }, [data?.gastosPeriodicosPorCategoria, gastosPeriodicosResumen.gastosPeriodicosPorCategoria])
 
   const anioMostrado = toNumber(data?.filtros?.anio) ?? toNumber(selectedAnio)
   const mesMostrado = toNumber(data?.filtros?.mes) ?? toNumber(selectedMes)
@@ -729,10 +831,7 @@ function App() {
   }
 
   function handleCurrentMonth() {
-    const targetPeriod = getMostRecentPeriod([
-      getCalendarPeriod(),
-      getPeriodFromIsoDate(metadata.fechaUltimoApunte),
-    ])
+    const targetPeriod = getCurrentDashboardPeriod(metadata)
 
     if (!targetPeriod) return
 
@@ -764,40 +863,54 @@ function App() {
 
       const gastoNumero = toNumber(gasto)
       const presupuestoNumero = toNumber(presupuesto)
+      const categoria = getValue(
+        item,
+        ['categoría', 'categoria', 'Categoría', 'Categoria'],
+        `Categoría ${index + 1}`
+      )
+      const ajustePeriodicoInfo =
+        gastosPeriodicosPorCategoria.get(normalizeCategoryKey(categoria)) ?? null
+      const ajustePeriodico = ajustePeriodicoInfo?.totalMes ?? 0
+      const presupuestoAjustadoNumero =
+        presupuestoNumero !== null
+          ? presupuestoNumero + ajustePeriodico
+          : ajustePeriodico > 0
+            ? ajustePeriodico
+            : null
 
       const diferencia =
-        getValue(item, ['diferencia', 'balance_presupuesto', 'balance_categoria'], null) ??
-        (gastoNumero !== null && presupuestoNumero !== null
-          ? presupuestoNumero - gastoNumero
-          : null)
+        gastoNumero !== null && presupuestoAjustadoNumero !== null
+          ? presupuestoAjustadoNumero - gastoNumero
+          : getValue(item, ['diferencia', 'balance_presupuesto', 'balance_categoria'], null)
 
       const porcentaje =
-        getValue(
-          item,
-          ['porcentaje_ejecucion', 'porcentaje_presupuesto_usado', 'pct_presupuesto'],
-          null
-        ) ??
-        (gastoNumero !== null && presupuestoNumero !== null && presupuestoNumero > 0
-          ? (gastoNumero / presupuestoNumero) * 100
-          : null)
+        (gastoNumero !== null &&
+        presupuestoAjustadoNumero !== null &&
+        presupuestoAjustadoNumero > 0
+          ? (gastoNumero / presupuestoAjustadoNumero) * 100
+          : getValue(
+              item,
+              ['porcentaje_ejecucion', 'porcentaje_presupuesto_usado', 'pct_presupuesto'],
+              null
+            ))
 
       const gastoNormalizado = gastoNumero ?? 0
       const presupuestoNormalizado = presupuestoNumero ?? 0
       const estado = getCategoryStatus(
         porcentaje,
         gastoNormalizado,
-        presupuestoNormalizado
+        presupuestoAjustadoNumero ?? presupuestoNormalizado
       )
 
       return {
         id: index,
-        categoria: getValue(
-          item,
-          ['categoría', 'categoria', 'Categoría', 'Categoria'],
-          `Categoría ${index + 1}`
-        ),
+        categoria,
         gasto,
         presupuesto,
+        presupuestoBase: presupuestoNumero,
+        ajustePeriodico,
+        presupuestoAjustado: presupuestoAjustadoNumero,
+        conceptosAjustePeriodico: ajustePeriodicoInfo?.conceptos ?? [],
         diferencia,
         porcentaje,
         estado,
@@ -805,7 +918,7 @@ function App() {
         presupuestoNumero: presupuestoNormalizado,
       }
     })
-  }, [dashboard])
+  }, [dashboard, gastosPeriodicosPorCategoria])
 
   const gastoTotal =
     getValue(primeraFila, ['gasto_total_mes', 'total_gastos_mes', 'gasto_total'], null) ??
@@ -961,7 +1074,7 @@ function App() {
   const chartData = categorias.map((item) => ({
     categoria: item.categoria,
     gasto: item.gastoNumero,
-    presupuesto: item.presupuestoNumero,
+    presupuesto: item.presupuestoAjustado ?? item.presupuestoNumero,
   }))
 
   const pieData = categorias
@@ -1176,7 +1289,9 @@ function App() {
       categorias_mes: categorias.map((item) => ({
         categoria: item.categoria,
         gasto_real: toNumber(item.gasto),
-        presupuesto: toNumber(item.presupuesto),
+        presupuesto_base: toNumber(item.presupuestoBase),
+        ajuste_periodico_categoria: toNumber(item.ajustePeriodico),
+        presupuesto_ajustado: toNumber(item.presupuestoAjustado),
         diferencia_presupuesto_menos_gasto: toNumber(item.diferencia),
         porcentaje_ejecucion: toNumber(item.porcentaje),
         estado: item.estado.label,
@@ -1462,7 +1577,9 @@ ${JSON.stringify(payload, null, 2)}`
         mayor_gasto: categoriasOrdenadasPorGasto.map((item) => ({
           categoria: item.categoria,
           gasto_real: toNumber(item.gasto),
-          presupuesto: toNumber(item.presupuesto),
+          presupuesto_base: toNumber(item.presupuestoBase),
+          ajuste_periodico_categoria: toNumber(item.ajustePeriodico),
+          presupuesto_ajustado: toNumber(item.presupuestoAjustado),
           diferencia_presupuesto_menos_gasto: toNumber(item.diferencia),
           porcentaje_ejecucion: toNumber(item.porcentaje),
           estado: item.estado.label,
@@ -1470,7 +1587,9 @@ ${JSON.stringify(payload, null, 2)}`
         desviaciones_relevantes: categoriasConDesviacion.map((item) => ({
           categoria: item.categoria,
           gasto_real: toNumber(item.gasto),
-          presupuesto: toNumber(item.presupuesto),
+          presupuesto_base: toNumber(item.presupuestoBase),
+          ajuste_periodico_categoria: toNumber(item.ajustePeriodico),
+          presupuesto_ajustado: toNumber(item.presupuestoAjustado),
           diferencia_presupuesto_menos_gasto: toNumber(item.diferencia),
           porcentaje_ejecucion: toNumber(item.porcentaje),
           estado: item.estado.label,
@@ -2180,7 +2299,7 @@ ${JSON.stringify(payload, null, 2)}
                       />
                       <Bar
                         dataKey="presupuesto"
-                        name="Presupuesto"
+                        name="Presupuesto ajustado"
                         radius={[0, 8, 8, 0]}
                         fill="#94a3b8"
                         barSize={18}
@@ -2191,7 +2310,7 @@ ${JSON.stringify(payload, null, 2)}
 
                 <div className="chart-legend">
                   <span><i className="legend-blue" /> Gasto real</span>
-                  <span><i className="legend-gray" /> Presupuesto</span>
+                  <span><i className="legend-gray" /> Presupuesto ajustado</span>
                 </div>
               </article>
 
@@ -2267,7 +2386,7 @@ ${JSON.stringify(payload, null, 2)}
               <div className="table-header">
                 <div>
                   <h2>Gastos por categoría</h2>
-                  <p>Comparativa entre gasto real y presupuesto mensual.</p>
+                  <p>Comparativa entre gasto real, presupuesto base y ajuste periódico común.</p>
                 </div>
               </div>
 
@@ -2277,7 +2396,17 @@ ${JSON.stringify(payload, null, 2)}
                     <tr>
                       <th>Categoría</th>
                       <th>Gasto real</th>
-                      <th>Presupuesto</th>
+                      <th>Presupuesto base</th>
+                      <th>
+                        <span className="table-heading-help">
+                          Ajuste periódico
+                          <HelpTooltip
+                            text="Presupuesto ajustado = presupuesto base + gastos periódicos comunes asignados a esta categoría en el mes."
+                            label="Ayuda: Presupuesto ajustado por categoría"
+                          />
+                        </span>
+                      </th>
+                      <th>Presupuesto ajustado</th>
                       <th>Diferencia</th>
                       <th>% ejecución</th>
                       <th>Estado</th>
@@ -2293,7 +2422,11 @@ ${JSON.stringify(payload, null, 2)}
                         <tr key={item.id} className={`row-${item.estado.key}`}>
                           <td className="category-name">{item.categoria}</td>
                           <td>{formatCurrency(item.gasto)}</td>
-                          <td>{formatCurrency(item.presupuesto)}</td>
+                          <td>{formatCurrency(item.presupuestoBase)}</td>
+                          <td className={item.ajustePeriodico > 0 ? 'periodic-adjustment' : 'muted-text'}>
+                            {formatCurrency(item.ajustePeriodico)}
+                          </td>
+                          <td>{formatCurrency(item.presupuestoAjustado)}</td>
                           <td className={diferenciaEsPositiva ? 'positive-text' : 'negative-text'}>
                             {formatCurrency(item.diferencia)}
                           </td>

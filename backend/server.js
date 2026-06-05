@@ -396,6 +396,7 @@ function normalizarGastosPeriodicos(rows, mes) {
     totalPendiente: 0,
     totalEjecutado: 0,
     totalImpactoComun: 0,
+    gastosPeriodicosPorCategoria: [],
     descartados: [],
   };
 
@@ -411,12 +412,10 @@ function normalizarGastosPeriodicos(rows, mes) {
   rows.slice(1).forEach((row, index) => {
     const rowNumber = index + 2;
     const normalizedRow = {};
-    const originalRow = {};
 
     headers.forEach((header, columnIndex) => {
       const rawValue = row[columnIndex] ?? '';
       normalizedRow[header.normalized] = rawValue;
-      originalRow[header.original] = rawValue;
     });
 
     const mesNum = parseSafeNumber(
@@ -435,29 +434,28 @@ function normalizarGastosPeriodicos(rows, mes) {
     const quienRaw = getNormalizedField(normalizedRow, ['quien', 'quién']);
     const quienNormalizado = normalizeText(quienRaw);
 
-    if (!['comun', 'porcentaje'].includes(quienNormalizado)) {
+    if (quienNormalizado !== 'comun') {
       result.descartados.push({
         fila: rowNumber,
-        motivo: 'quien_no_comun_ni_porcentaje',
+        motivo: 'quien_no_comun',
         quien: quienRaw ?? null,
       });
       return;
     }
 
     const totalRaw = getNormalizedField(normalizedRow, ['total']);
-    const mikelRaw = getNormalizedField(normalizedRow, ['mikel']);
     const total = parseSafeNumber(totalRaw);
-    const mikel = parseSafeNumber(mikelRaw);
     const totalSeguro = total ?? 0;
-    const mikelSeguro = mikel ?? 0;
     const impacto = roundCurrency(totalSeguro);
     const estadoRaw = getNormalizedField(normalizedRow, ['estado']);
     const estadoNormalizado = normalizeText(estadoRaw);
     const estadoCalculado = estadoNormalizado === 'ejecutado' ? 'Ejecutado' : 'Pendiente';
+    const categoria = String(
+      getNormalizedField(normalizedRow, ['categoria', 'categoría'], '') ?? ''
+    ).trim();
     const advertencias = [];
 
     if (total === null) advertencias.push('total_no_numerico_tratado_como_0');
-    if (mikel === null) advertencias.push('mikel_no_numerico_tratado_como_0');
     if (!estadoNormalizado) advertencias.push('estado_vacio_tratado_como_pendiente');
     if (estadoNormalizado && !['pendiente', 'ejecutado'].includes(estadoNormalizado)) {
       advertencias.push('estado_no_reconocido_tratado_como_pendiente');
@@ -468,17 +466,16 @@ function normalizarGastosPeriodicos(rows, mes) {
     const concepto = getNormalizedField(normalizedRow, ['concepto'], '');
 
     const item = {
-      ...originalRow,
       fila: rowNumber,
       concepto,
       quien: quienRaw,
       quien_normalizado: quienNormalizado,
       mes_num: mesNum,
       total: totalSeguro,
-      mikel: mikelSeguro,
       estado: estadoCalculado,
       estado_original: estadoRaw ?? '',
       estado_normalizado: estadoNormalizado || 'pendiente',
+      categoria,
       impacto_total: impacto,
       impacto_comun: impacto,
       importe_dashboard: impacto,
@@ -491,6 +488,32 @@ function normalizarGastosPeriodicos(rows, mes) {
     result.totalImpactoComun = roundCurrency(result.totalImpactoComun + impacto);
     result.totalPendiente = roundCurrency(result.totalPendiente + importePendiente);
     result.totalEjecutado = roundCurrency(result.totalEjecutado + importeEjecutado);
+
+    if (categoria) {
+      let resumenCategoria = result.gastosPeriodicosPorCategoria.find(
+        (entry) => normalizeText(entry.categoria) === normalizeText(categoria)
+      );
+
+      if (!resumenCategoria) {
+        resumenCategoria = {
+          categoria,
+          totalPendiente: 0,
+          totalEjecutado: 0,
+          totalMes: 0,
+          conceptos: [],
+        };
+        result.gastosPeriodicosPorCategoria.push(resumenCategoria);
+      }
+
+      resumenCategoria.totalPendiente = roundCurrency(
+        resumenCategoria.totalPendiente + importePendiente
+      );
+      resumenCategoria.totalEjecutado = roundCurrency(
+        resumenCategoria.totalEjecutado + importeEjecutado
+      );
+      resumenCategoria.totalMes = roundCurrency(resumenCategoria.totalMes + impacto);
+      resumenCategoria.conceptos.push(concepto);
+    }
   });
 
   return result;
@@ -894,12 +917,12 @@ function diagnoseGastosPeriodicosRows(diagnostico, rows, mes) {
         'API_GastosPeriodicos: fila sin quién',
         { fila: row.fila, concepto }
       );
-    } else if (!['comun', 'porcentaje'].includes(quienNormalizado)) {
+    } else if (quienNormalizado !== 'comun') {
       addDiagnosticItem(
         diagnostico,
         'avisos',
         'gasto_periodico_quien_no_valido',
-        'API_GastosPeriodicos: quién no es común ni porcentaje',
+        'API_GastosPeriodicos: quién no es común; no entra en el dashboard familiar',
         { fila: row.fila, concepto, quien }
       );
     }
@@ -938,11 +961,12 @@ function diagnoseGastosPeriodicosRows(diagnostico, rows, mes) {
     diagnostico,
     'info',
     'gastos_periodicos_normalizados',
-    'GASTOS_PERIODICOS se valida usando TOTAL; MIKEL no se usa para el cálculo familiar',
+    'GASTOS_PERIODICOS se valida usando TOTAL solo para QUIEN = COMUN; MIKEL no se usa para el cálculo familiar',
     {
       itemsValidos: normalized.items.length,
       totalPendiente: normalized.totalPendiente,
       totalEjecutado: normalized.totalEjecutado,
+      categorias: normalized.gastosPeriodicosPorCategoria.length,
       descartados: normalized.descartados.length,
     }
   );
@@ -1137,6 +1161,7 @@ app.get('/api/gastos-periodicos', async (req, res) => {
         totalPendiente: gastosNormalizados.totalPendiente,
         totalEjecutado: gastosNormalizados.totalEjecutado,
       },
+      gastosPeriodicosPorCategoria: gastosNormalizados.gastosPeriodicosPorCategoria,
       descartados: gastosNormalizados.descartados,
       data: gastosNormalizados.items,
     });
@@ -1284,6 +1309,7 @@ app.get('/api/app-state', async (req, res) => {
     let totalGastosPeriodicos = 0;
     let totalGastosPeriodicosPendientes = 0;
     let totalGastosPeriodicosEjecutados = 0;
+    let gastosPeriodicosPorCategoria = [];
 
     try {
       const gastosPeriodicosRows = await readSheet('API_GastosPeriodicos!A:Z');
@@ -1297,6 +1323,7 @@ app.get('/api/app-state', async (req, res) => {
       totalGastosPeriodicos = gastosNormalizados.totalImpactoComun;
       totalGastosPeriodicosPendientes = gastosNormalizados.totalPendiente;
       totalGastosPeriodicosEjecutados = gastosNormalizados.totalEjecutado;
+      gastosPeriodicosPorCategoria = gastosNormalizados.gastosPeriodicosPorCategoria;
     } catch (gastosPeriodicosError) {
       console.warn(
         'No se pudo leer API_GastosPeriodicos:',
@@ -1369,6 +1396,7 @@ app.get('/api/app-state', async (req, res) => {
         totalPrevisto: totalGastosPeriodicos,
         totalPendiente: totalGastosPeriodicosPendientes,
         totalEjecutado: totalGastosPeriodicosEjecutados,
+        gastosPeriodicosPorCategoria,
         ingresoPrevistoMes:
           typeof ingresoPrevistoMes === 'number' ? ingresoPrevistoMes : null,
         presupuestoBaseMes:
@@ -1377,6 +1405,7 @@ app.get('/api/app-state', async (req, res) => {
             : null,
         presupuestoOrdinarioDisponible,
       },
+      gastosPeriodicosPorCategoria,
     });
   } catch (error) {
     return handleEndpointError(res, error, 'No se pudieron cargar los datos del dashboard');

@@ -159,7 +159,7 @@ h1 {
 }
 
 .data-status-panel {
-  overflow: hidden;
+  overflow: visible;
   margin-bottom: 18px;
   border: 1px solid #dbeafe;
   border-radius: 16px;
@@ -492,7 +492,7 @@ h1 {
   position: relative;
   display: inline-flex;
   flex: 0 0 auto;
-  z-index: 5;
+  z-index: 1100;
 }
 
 .help-tooltip-button {
@@ -519,22 +519,23 @@ h1 {
 }
 
 .help-tooltip-content {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  width: min(260px, calc(100vw - 36px));
+  position: fixed;
+  top: var(--help-tooltip-top, 0);
+  left: var(--help-tooltip-left, 0);
+  width: var(--help-tooltip-width, min(280px, calc(100vw - 28px)));
   padding: 10px 12px;
   border: 1px solid #dbeafe;
   border-radius: 12px;
   background: #ffffff;
   color: #1e3a8a;
   box-shadow: 0 14px 32px rgba(15, 23, 42, 0.18);
+  z-index: 1200;
   font-size: 12px;
   font-weight: 750;
   line-height: 1.45;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(4px);
+  transform: translateY(calc(-100% + 4px));
   transition: opacity 0.16s ease, transform 0.16s ease;
   white-space: normal;
 }
@@ -557,6 +558,24 @@ h1 {
 .help-tooltip.is-open .help-tooltip-content {
   opacity: 1;
   pointer-events: auto;
+  transform: translateY(-100%);
+}
+
+.help-tooltip-content[data-placement='bottom'] {
+  transform: translateY(-4px);
+}
+
+.help-tooltip-content[data-placement='bottom']::after {
+  top: -6px;
+  bottom: auto;
+  border: 0;
+  border-left: 1px solid #dbeafe;
+  border-top: 1px solid #dbeafe;
+}
+
+.help-tooltip:hover .help-tooltip-content[data-placement='bottom'],
+.help-tooltip:focus-within .help-tooltip-content[data-placement='bottom'],
+.help-tooltip.is-open .help-tooltip-content[data-placement='bottom'] {
   transform: translateY(0);
 }
 
@@ -575,8 +594,7 @@ h1 {
 }
 
 .data-status-help .help-tooltip-content {
-  bottom: auto;
-  top: calc(100% + 8px);
+  top: var(--help-tooltip-top, 0);
 }
 
 .data-status-help .help-tooltip-content::after {
@@ -965,6 +983,23 @@ th {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   background: #f8fafc;
+}
+
+.table-heading-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.periodic-adjustment {
+  color: #075985;
+  font-weight: 850;
+}
+
+.muted-text {
+  color: #94a3b8;
+  font-weight: 700;
 }
 
 tbody tr.row-warning td {

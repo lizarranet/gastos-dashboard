@@ -4097,6 +4097,21 @@ function actualizarAPIGastosPeriodicos() {
     return 'Pendiente';
   }
 
+  function indiceCabecera(nombre) {
+    const buscado = normalizarTexto(nombre).replace(/[^A-Z0-9]/g, '');
+    return datos[0].findIndex(celda =>
+      normalizarTexto(celda).replace(/[^A-Z0-9]/g, '') === buscado
+    );
+  }
+
+  function valorCabecera(fila, nombre, posicionFallback) {
+    const indice = indiceCabecera(nombre);
+    const posicion = indice >= 0 ? indice : posicionFallback;
+    return posicion >= 0 ? fila[posicion] : '';
+  }
+
+  const colCategoria = indiceCabecera('CATEGORIA');
+
   const salida = [[
     'mes_num',
     'mes',
@@ -4105,6 +4120,7 @@ function actualizarAPIGastosPeriodicos() {
     'total',
     'mikel',
     'estado',
+    'categoria',
     'importe_dashboard',
     'importe_pendiente_dashboard',
     'importe_ejecutado_dashboard',
@@ -4118,13 +4134,14 @@ function actualizarAPIGastosPeriodicos() {
   for (let i = 1; i < datos.length; i++) {
     const fila = datos[i];
 
-    const mesCelda = normalizarTexto(fila[0]);
-    const concepto = fila[1];
-    const quienOriginal = fila[2];
+    const mesCelda = normalizarTexto(valorCabecera(fila, 'MES', 0));
+    const concepto = valorCabecera(fila, 'CONCEPTO', 1);
+    const quienOriginal = valorCabecera(fila, 'QUIEN', 2);
     const quien = normalizarTexto(quienOriginal);
-    const total = numero(fila[3]);
-    const mikel = numero(fila[4]);
-    const estado = estadoNormalizado(fila[5]);
+    const total = numero(valorCabecera(fila, 'TOTAL', 3));
+    const mikel = numero(valorCabecera(fila, 'MIKEL', 4));
+    const estado = estadoNormalizado(valorCabecera(fila, 'ESTADO', 5));
+    const categoria = colCategoria >= 0 ? fila[colCategoria] : '';
 
     if (mesCelda && mesesMap[mesCelda]) {
       mesActual = mesCelda.charAt(0) + mesCelda.slice(1).toLowerCase();
@@ -4135,13 +4152,11 @@ function actualizarAPIGastosPeriodicos() {
     if (!concepto) continue;
     if (normalizarTexto(concepto) === 'TOTAL') continue;
 
-    const incluir =
-      quien === 'COMUN' ||
-      quien === 'PORCENTAJE';
+    const incluir = quien === 'COMUN';
 
     if (!incluir) continue;
 
-    const importeDashboard = Math.round((total - mikel) * 100) / 100;
+    const importeDashboard = Math.round(total * 100) / 100;
     const importePendiente = estado === 'Pendiente' ? importeDashboard : 0;
     const importeEjecutado = estado === 'Ejecutado' ? importeDashboard : 0;
 
@@ -4153,10 +4168,11 @@ function actualizarAPIGastosPeriodicos() {
       total,
       mikel,
       estado,
+      categoria,
       importeDashboard,
       importePendiente,
       importeEjecutado,
-      'TOTAL - MIKEL; preventivo solo si ESTADO = Pendiente',
+      'TOTAL; preventivo si ESTADO = Pendiente; ajusta categoría si tiene CATEGORIA',
       'GASTOS PERIODICOS'
     ]);
   }
@@ -4183,7 +4199,8 @@ function actualizarAPIGastosPeriodicos() {
     const filas = salida.length - 1;
 
     shDestino.getRange(2, 1, filas, 1).setNumberFormat('0');
-    shDestino.getRange(2, 5, filas, 6).setNumberFormat('#,##0.00 €');
+    shDestino.getRange(2, 5, filas, 2).setNumberFormat('#,##0.00 €');
+    shDestino.getRange(2, 9, filas, 3).setNumberFormat('#,##0.00 €');
 
     const rangoEstado = shDestino.getRange(2, 7, filas, 1);
 
