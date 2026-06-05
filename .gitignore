@@ -5,3 +5,5 @@ backend/credentials/
 *.log
 .DS_Store
 Thumbs.db
+
+apps-script-backup-*.txt

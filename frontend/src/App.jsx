@@ -34,6 +34,7 @@ const API_BASE_URL = getApiBaseUrl()
 const API_URL = `${API_BASE_URL}/app-state`
 const MEDIAS_CATEGORIA_URL = `${API_BASE_URL}/medias-categoria`
 const DIAGNOSTICO_DATOS_URL = `${API_BASE_URL}/diagnostico-datos`
+const GASTOS_PERIODICOS_URL = `${API_BASE_URL}/gastos-periodicos`
 
 const MONTH_NAMES = [
   'Enero',
@@ -97,10 +98,6 @@ function getValue(obj, keys, fallback = null) {
     }
   }
   return fallback
-}
-
-function getConfigValue(config, parameterName) {
-  return config.find((item) => item.Parámetro === parameterName)?.Valor ?? null
 }
 
 function getSummaryGasto(row) {
@@ -206,6 +203,39 @@ function getPreviousPeriod(year, month) {
     year: yearNumber,
     month: monthNumber - 1,
   }
+}
+
+function getPeriodFromIsoDate(value) {
+  if (!value) return null
+
+  const match = String(value).match(/^(\d{4})-(\d{1,2})-(\d{1,2})/)
+
+  if (!match) return null
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+
+  if (!year || !month || month < 1 || month > 12) return null
+
+  return {
+    year,
+    month,
+  }
+}
+
+function getCalendarPeriod() {
+  const today = new Date()
+
+  return {
+    year: today.getFullYear(),
+    month: today.getMonth() + 1,
+  }
+}
+
+function getMostRecentPeriod(periods) {
+  return periods
+    .filter((period) => period?.year && period?.month)
+    .sort((a, b) => b.year * 12 + b.month - (a.year * 12 + a.month))[0] ?? null
 }
 
 function getRowYear(item) {
@@ -503,6 +533,10 @@ function App() {
   const [mediasCategoria, setMediasCategoria] = useState([])
   const [mediasLoading, setMediasLoading] = useState(false)
   const [selectedCategoriaMedia, setSelectedCategoriaMedia] = useState('')
+  const [gastosPeriodicosSiguiente, setGastosPeriodicosSiguiente] = useState(null)
+  const [iaPrompt, setIaPrompt] = useState('')
+  const [iaPromptTitle, setIaPromptTitle] = useState('')
+  const [iaPromptOpen, setIaPromptOpen] = useState(false)
 
   function fetchAppState(anioFiltro, mesFiltro) {
     setLoading(true)
@@ -574,6 +608,23 @@ function App() {
       })
   }
 
+  function fetchGastosPeriodicosSiguiente(mesFiltro) {
+    const mesNumero = toNumber(mesFiltro)
+    if (!mesNumero) return
+
+    const mesSiguiente = mesNumero === 12 ? 1 : mesNumero + 1
+
+    axios
+      .get(GASTOS_PERIODICOS_URL, { params: { mes: mesSiguiente } })
+      .then((response) => {
+        setGastosPeriodicosSiguiente(response.data ?? null)
+      })
+      .catch((error) => {
+        console.error(error)
+        setGastosPeriodicosSiguiente(null)
+      })
+  }
+
   useEffect(() => {
     fetchAppState()
   }, [])
@@ -589,16 +640,17 @@ function App() {
     if (anio || mes) fetchDiagnosticoDatos(anio, mes)
   }, [data?.filtros?.anio, data?.filtros?.mes])
 
+  useEffect(() => {
+    const mes = data?.filtros?.mes
+    if (mes) fetchGastosPeriodicosSiguiente(mes)
+  }, [data?.filtros?.mes])
+
   const dashboard = data?.dashboard ?? []
   const resumen = data?.resumen ?? []
-  const config = data?.config ?? []
   const primeraFila = dashboard[0] ?? {}
   const metadata = data?.metadata ?? {}
   const gastosPeriodicos = data?.gastosPeriodicos ?? []
   const gastosPeriodicosResumen = data?.gastosPeriodicosResumen ?? {}
-
-  const anioActivo = toNumber(getConfigValue(config, 'año_activo'))
-  const mesActivo = toNumber(getConfigValue(config, 'mes_num_activo'))
 
   const anioMostrado = toNumber(data?.filtros?.anio) ?? toNumber(selectedAnio)
   const mesMostrado = toNumber(data?.filtros?.mes) ?? toNumber(selectedMes)
@@ -636,8 +688,14 @@ function App() {
   }
 
   function handleCurrentMonth() {
-    if (!anioActivo || !mesActivo) return
-    fetchAppState(anioActivo, mesActivo)
+    const targetPeriod = getMostRecentPeriod([
+      getCalendarPeriod(),
+      getPeriodFromIsoDate(metadata.fechaUltimoApunte),
+    ])
+
+    if (!targetPeriod) return
+
+    fetchAppState(targetPeriod.year, targetPeriod.month)
   }
 
   function toggleSection(sectionKey) {
@@ -1070,7 +1128,6 @@ function App() {
           quien: item.quien,
           estado: item.estado ?? 'Pendiente',
           total: toNumber(item.total),
-          mikel: toNumber(item.mikel),
           impacto_total_dashboard: toNumber(item.importe_dashboard),
           impacto_pendiente_dashboard: toNumber(item.importe_pendiente_dashboard),
         })),
@@ -1290,6 +1347,252 @@ Datos del dashboard:
 ${JSON.stringify(payload, null, 2)}`
   }
 
+  function getNextPeriodForAI() {
+    const month = toNumber(mesMostrado)
+    const year = toNumber(anioMostrado)
+
+    if (!month || !year) {
+      return {
+        anio: null,
+        mes_num: null,
+        mes: 'Sin periodo',
+      }
+    }
+
+    const nextMonth = month === 12 ? 1 : month + 1
+    const nextYear = month === 12 ? year + 1 : year
+
+    return {
+      anio: nextYear,
+      mes_num: nextMonth,
+      mes: formatMonth(nextMonth),
+    }
+  }
+
+  function buildInformeIAPayload() {
+    const nextPeriod = getNextPeriodForAI()
+    const categoriasOrdenadasPorGasto = [...categorias]
+      .sort((a, b) => (toNumber(b.gasto) ?? 0) - (toNumber(a.gasto) ?? 0))
+      .slice(0, 8)
+    const categoriasConDesviacion = [...categorias]
+      .filter((item) => toNumber(item.gasto) !== null || toNumber(item.presupuesto) !== null)
+      .sort((a, b) => Math.abs(toNumber(b.diferencia) ?? 0) - Math.abs(toNumber(a.diferencia) ?? 0))
+      .slice(0, 8)
+    const ultimosMeses = resumenAnioMostrado.slice(-4).map((item) => ({
+      anio: getRowYear(item),
+      mes_num: getRowMonthNumber(item),
+      mes: getRowMonthLabel(item, getRowMonthNumber(item)),
+      ingreso_previsto: toNumber(item.ingreso_previsto),
+      gasto_total: toNumber(getSummaryGasto(item)),
+      presupuesto: toNumber(getSummaryPresupuesto(item)),
+      balance: toNumber(getSummaryBalance(item)),
+    }))
+    const gastosSiguiente = gastosPeriodicosSiguiente?.data ?? []
+    const resumenGastosSiguiente = gastosPeriodicosSiguiente?.resumen ?? null
+
+    return {
+      periodo_actual: {
+        anio: anioMostrado,
+        mes_num: mesMostrado,
+        mes: formatMonth(mesMostrado),
+      },
+      resumen_mes: {
+        aportacion_prevista: ingresoPrevistoGastosPeriodicos,
+        gasto_real: toNumber(gastoTotal),
+        presupuesto: toNumber(presupuestoTotal),
+        balance: toNumber(balanceMesCalculado),
+        porcentaje_presupuesto_usado: toNumber(porcentajePresupuesto),
+        disponible_gasto_ordinario: presupuestoOrdinarioDisponible,
+        uso_disponible_pct: porcentajeDisponibleConsumido,
+        balance_ajustado_preventivo: balanceAjustadoPreventivo,
+      },
+      gastos_periodicos_actuales: {
+        total_pendiente: totalGastosPeriodicosPendientes,
+        total_ejecutado: totalGastosPeriodicosEjecutados,
+        detalle: gastosPeriodicos.map((item) => ({
+          concepto: item.concepto,
+          estado: item.estado ?? 'Pendiente',
+          total: toNumber(item.total),
+          impacto_pendiente: toNumber(item.importe_pendiente_dashboard),
+          impacto_total: toNumber(item.importe_dashboard),
+        })),
+      },
+      categorias: {
+        mayor_gasto: categoriasOrdenadasPorGasto.map((item) => ({
+          categoria: item.categoria,
+          gasto_real: toNumber(item.gasto),
+          presupuesto: toNumber(item.presupuesto),
+          diferencia_presupuesto_menos_gasto: toNumber(item.diferencia),
+          porcentaje_ejecucion: toNumber(item.porcentaje),
+          estado: item.estado.label,
+        })),
+        desviaciones_relevantes: categoriasConDesviacion.map((item) => ({
+          categoria: item.categoria,
+          gasto_real: toNumber(item.gasto),
+          presupuesto: toNumber(item.presupuesto),
+          diferencia_presupuesto_menos_gasto: toNumber(item.diferencia),
+          porcentaje_ejecucion: toNumber(item.porcentaje),
+          estado: item.estado.label,
+        })),
+      },
+      historico_y_medias: {
+        gasto_mes_anterior: gastoResumenAnterior,
+        variacion_gasto_eur: variacionGasto,
+        variacion_gasto_pct: variacionPorcentaje,
+        media_mensual_anio: mediaGastoAnual,
+        ultimos_meses: ultimosMeses,
+        media_categoria_seleccionada: selectedCategoriaMedia
+          ? {
+              categoria: selectedCategoriaMedia,
+              ultimo_dato: mediaCategoriaUltimoDato,
+              serie: mediaCategoriaData,
+            }
+          : null,
+      },
+      prevision_mes_siguiente: {
+        periodo: nextPeriod,
+        origen: 'Endpoint /api/gastos-periodicos filtrado por mes_num; no filtra por año.',
+        total_pendiente: toNumber(resumenGastosSiguiente?.totalPendiente),
+        total_ejecutado: toNumber(resumenGastosSiguiente?.totalEjecutado),
+        detalle: gastosSiguiente.map((item) => ({
+          concepto: item.concepto,
+          estado: item.estado ?? 'Pendiente',
+          total: toNumber(item.total),
+          impacto_pendiente: toNumber(item.importe_pendiente_dashboard),
+          impacto_total: toNumber(item.importe_dashboard),
+        })),
+      },
+      diagnostico_datos: diagnostico
+        ? {
+            resumen: diagnostico.resumen,
+            errores: (diagnostico.errores ?? []).map((item) => item.message),
+            avisos: (diagnostico.avisos ?? []).map((item) => item.message),
+            info: (diagnostico.info ?? []).map((item) => item.message),
+          }
+        : {
+            resumen: null,
+            limitacion: diagnosticoError
+              ? 'No se pudo comprobar el estado de datos.'
+              : 'Diagnóstico no disponible todavía.',
+          },
+      limitaciones_conocidas: [
+        'No inventar datos que no aparezcan en el JSON.',
+        'El dashboard representa el fondo común familiar para gastos compartidos.',
+        'No mostrar datos personales de reparto interno.',
+        'Los gastos periódicos pendientes reducen el margen ordinario real.',
+        'Los gastos ejecutados no deben restarse preventivamente otra vez.',
+      ],
+    }
+  }
+
+  function buildInformeIAPrompt(tipoInforme) {
+    const payload = buildInformeIAPayload()
+    const isCierre = tipoInforme === 'cierre'
+    const titulo = isCierre
+      ? `Informe de cierre de mes - ${formatMonth(mesMostrado)} ${anioMostrado}`
+      : `Informe: cómo va el mes - ${formatMonth(mesMostrado)} ${anioMostrado}`
+    const nombreArchivo = isCierre
+      ? `informe_cierre_mes_${anioMostrado}_${String(mesMostrado).padStart(2, '0')}.pdf`
+      : `informe_como_va_el_mes_${anioMostrado}_${String(mesMostrado).padStart(2, '0')}.pdf`
+    const enfoque = isCierre
+      ? 'Evalúa el resultado del mes, identifica aprendizajes y prepara el mes siguiente.'
+      : 'Evalúa cómo va el mes hasta ahora, qué vigilar y qué decisiones prácticas tomar.'
+
+    return `# ${titulo}
+
+Actúa como analista financiero familiar. Usa exclusivamente los datos del JSON. No inventes cifras.
+
+## Objetivo
+${enfoque}
+
+El informe debe aportar interpretación, síntesis y prioridades. No debe repetir simplemente los KPIs del dashboard.
+
+## Reglas de análisis
+- Distingue datos reales, estimaciones y recomendaciones.
+- Usa tono claro, familiar, práctico y no alarmista.
+- Redondea las cifras para que sean fáciles de leer.
+- No muestres datos personales de reparto interno.
+- No menciones nombres personales de reparto interno ni los incluyas en el informe.
+- Explica las limitaciones de datos cuando afecten a la interpretación.
+- Si faltan datos ordinarios del mes, usa los gastos periódicos y el histórico con prudencia.
+- Los gastos periódicos pendientes reducen el disponible ordinario real.
+- Los gastos periódicos ejecutados ya están absorbidos y no deben restarse otra vez.
+
+## Salida principal obligatoria
+Devuelve directamente un archivo PDF descargable.
+- Nombre de archivo sugerido: ${nombreArchivo}
+- No devuelvas HTML salvo que no puedas crear el PDF.
+- No incluyas el JSON en el PDF.
+- No incluyas explicaciones técnicas.
+- No expliques cómo has creado el archivo.
+- Después de crear el PDF, puedes añadir fuera del PDF un mensaje breve para WhatsApp/email familiar.
+
+## Fallback si no puedes crear archivos
+Si no puedes generar un PDF descargable, devuelve como alternativa un HTML compacto autocontenido:
+- máximo 2 páginas A4;
+- CSS incluido dentro de \`<style>\`;
+- sin JavaScript;
+- sin recursos externos;
+- sin imágenes externas;
+- sin fuentes externas;
+- listo para imprimir o guardar como PDF desde el navegador.
+
+## Formato del PDF
+- Máximo 2 páginas; preferiblemente 1 página.
+- Formato A4 vertical.
+- Diseño profesional, limpio, compacto y visualmente atractivo.
+- Claro para una persona no técnica.
+- Sin aspecto de dashboard técnico.
+- Colores sobrios y semánticos para positivo, alerta y riesgo.
+- Limitaciones en texto pequeño al pie.
+
+## Estructura visual obligatoria del PDF
+1. Cabecera con título, periodo y estado general.
+2. Resumen ejecutivo de 4-5 líneas.
+3. Tarjetas KPI principales.
+4. Bloque "3 claves del mes".
+5. Bloque "Qué vigilar".
+6. Bloque "Qué hacer ahora".
+7. Bloque "Previsión del mes siguiente".
+8. Bloque destacado "Decisión recomendada".
+9. Limitaciones de los datos en pie de página.
+
+## Tarjetas KPI
+Usa como máximo 4 KPIs principales:
+- balance;
+- gasto real o uso del disponible;
+- gastos periódicos pendientes del mes siguiente;
+- derrama recomendada si procede.
+
+Si un KPI no tiene dato fiable, sustitúyelo por otro más útil del JSON e indica la limitación de forma breve.
+
+## Previsión del mes siguiente
+Incluye una sección específica que responda:
+- qué gastos periódicos/fijos vienen el mes siguiente;
+- cuánto reducen el margen ordinario real;
+- si el presupuesto disponible para partidas clásicas es menor de lo que parece;
+- si conviene anticipar una derrama o ingreso extra;
+- cuantía orientativa de esa derrama, basada en gastos periódicos pendientes del mes siguiente, histórico reciente, media de gasto ordinario y prudencia ante datos incompletos.
+
+## Reglas de compacidad
+- Exactamente 3 claves del mes.
+- Máximo 3 focos a vigilar.
+- Máximo 4 acciones recomendadas.
+- Máximo 1 tabla de categorías.
+- Máximo 1 tabla de previsión del mes siguiente.
+- No incluyas tablas largas.
+- No incluyas todo el detalle si no aporta una decisión.
+- No repitas mecánicamente los KPIs; interpreta qué implican.
+- Incluye nivel de confianza: alta, media o baja.
+- En "Derrama o ingreso extra", explica la lógica como recomendación prudente, no como obligación matemática.
+
+## Datos del dashboard
+\`\`\`json
+${JSON.stringify(payload, null, 2)}
+\`\`\`
+`
+  }
+
   async function copyToClipboard(text, successMessage) {
     try {
       await navigator.clipboard.writeText(text)
@@ -1322,6 +1625,44 @@ ${JSON.stringify(payload, null, 2)}`
       JSON.stringify(buildAnalisisIAPayload(), null, 2),
       'Datos JSON para IA copiados'
     )
+  }
+
+  function handleGenerateInformeIA(tipoInforme) {
+    const prompt = buildInformeIAPrompt(tipoInforme)
+    const title =
+      tipoInforme === 'cierre'
+        ? 'Prompt: Cierre de mes'
+        : 'Prompt: Cómo va el mes'
+
+    setIaPrompt(prompt)
+    setIaPromptTitle(title)
+    setIaPromptOpen(true)
+    copyToClipboard(prompt, `${title} copiado`)
+  }
+
+  function handleTogglePromptIA() {
+    setIaPromptOpen((current) => !current)
+  }
+
+  function handleDownloadPromptIA() {
+    if (!iaPrompt) return
+
+    const slug = iaPromptTitle
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+    const blob = new Blob([iaPrompt], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+
+    link.href = url
+    link.download = `${slug || 'informe-ia'}-${anioMostrado}-${mesMostrado}.md`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
   }
 
 
@@ -1442,7 +1783,7 @@ ${JSON.stringify(payload, null, 2)}`
             <button
               className="filter-button secondary"
               onClick={handleCurrentMonth}
-              disabled={!anioActivo || !mesActivo || loading}
+              disabled={loading}
             >
               Mes actual
             </button>
@@ -1463,6 +1804,7 @@ ${JSON.stringify(payload, null, 2)}`
               <h2>Sin datos ordinarios para este periodo</h2>
               <p>
                 No hay registros en API_Dashboard para {formatMonth(selectedMes)} de {selectedAnio}.
+                Revisa si las hojas API se han actualizado.
               </p>
               <p>
                 Aun así, si existen gastos periódicos previstos para el mes, se muestran como aviso preventivo.
@@ -1481,12 +1823,12 @@ ${JSON.stringify(payload, null, 2)}`
             >
               <section className="periodic-section">
                 <div className="periodic-summary-grid">
-                  <article className="card">
+                  <article className="card priority-card">
                     <p>Aportación prevista</p>
                     <h2>{formatCurrency(ingresoPrevistoGastosPeriodicos)}</h2>
                   </article>
 
-                  <article className={totalGastosPeriodicosPendientes > 0 ? 'card bad' : 'card good'}>
+                  <article className={totalGastosPeriodicosPendientes > 0 ? 'card bad priority-card priority-warning' : 'card good priority-card'}>
                     <p>Gastos periódicos pendientes</p>
                     <h2>{formatCurrency(totalGastosPeriodicosPendientes)}</h2>
                   </article>
@@ -1496,12 +1838,13 @@ ${JSON.stringify(payload, null, 2)}`
                     <h2>{formatCurrency(totalGastosPeriodicosEjecutados)}</h2>
                   </article>
 
-                  <article className="card good">
+                  <article className="card good priority-card priority-good">
                     <p>Disponible gasto ordinario</p>
                     <h2>{formatCurrency(presupuestoOrdinarioDisponible)}</h2>
+                    <span className="card-note">AportaciÃ³n prevista menos gastos periÃ³dicos pendientes.</span>
                   </article>
 
-                  <article className={balanceAjustadoPreventivo >= 0 ? 'card good' : 'card bad'}>
+                  <article className={balanceAjustadoPreventivo >= 0 ? 'card good priority-card' : 'card bad priority-card'}>
                     <p>Balance ajustado preventivo</p>
                     <h2 className={balanceAjustadoPreventivoClass}>
                       {formatSignedCurrency(balanceAjustadoPreventivo)}
@@ -1541,18 +1884,18 @@ ${JSON.stringify(payload, null, 2)}`
                         <tbody>
                           {gastosPeriodicos.map((item, index) => (
                             <tr key={`${item.concepto}-${index}`}>
-                              <td className="category-name">{item.concepto}</td>
-                              <td>{item.quien}</td>
-                              <td>{formatCurrency(item.total)}</td>
-                              <td>
+                              <td className="category-name" data-label="Concepto">{item.concepto}</td>
+                              <td data-label="QuiÃ©n">{item.quien}</td>
+                              <td data-label="Total">{formatCurrency(item.total)}</td>
+                              <td data-label="Estado">
                                 <span className={`state-pill ${String(item.estado).toLowerCase() === 'ejecutado' ? 'state-ok' : 'state-warning'}`}>
                                   {item.estado ?? 'Pendiente'}
                                 </span>
                               </td>
-                              <td className={toNumber(item.importe_pendiente_dashboard) > 0 ? 'negative-text' : 'positive-text'}>
+                              <td data-label="Impacto pendiente" className={toNumber(item.importe_pendiente_dashboard) > 0 ? 'negative-text' : 'positive-text'}>
                                 {formatCurrency(item.importe_pendiente_dashboard)}
                               </td>
-                              <td>{formatCurrency(item.importe_dashboard)}</td>
+                              <td data-label="Impacto total">{formatCurrency(item.importe_dashboard)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1580,17 +1923,17 @@ ${JSON.stringify(payload, null, 2)}`
               onToggle={() => toggleSection('resumen')}
             >
               <section className="cards-grid">
-                <article className="card">
+                <article className="card priority-card">
                   <p>Ingresos mes</p>
                   <h2>{formatCurrency(ingresosMes)}</h2>
                 </article>
 
-                <article className="card">
+                <article className="card priority-card">
                   <p>Gastos mes</p>
                   <h2>{formatCurrency(gastoTotal)}</h2>
                 </article>
 
-                <article className={balanceEsPositivo ? 'card good' : 'card bad'}>
+                <article className={balanceEsPositivo ? 'card good priority-card' : 'card bad priority-card'}>
                   <p>Balance</p>
                   <h2>{formatCurrency(balanceMesCalculado)}</h2>
                 </article>
@@ -1631,12 +1974,12 @@ ${JSON.stringify(payload, null, 2)}`
             >
               <section className="periodic-section">
                 <div className="periodic-summary-grid">
-                  <article className="card">
+                  <article className="card priority-card">
                     <p>Aportación prevista</p>
                     <h2>{formatCurrency(ingresoPrevistoGastosPeriodicos)}</h2>
                   </article>
 
-                  <article className={totalGastosPeriodicosPendientes > 0 ? 'card bad' : 'card good'}>
+                  <article className={totalGastosPeriodicosPendientes > 0 ? 'card bad priority-card priority-warning' : 'card good priority-card'}>
                     <p>Gastos periódicos pendientes</p>
                     <h2>{formatCurrency(totalGastosPeriodicosPendientes)}</h2>
                   </article>
@@ -1646,12 +1989,13 @@ ${JSON.stringify(payload, null, 2)}`
                     <h2>{formatCurrency(totalGastosPeriodicosEjecutados)}</h2>
                   </article>
 
-                  <article className="card good">
+                  <article className="card good priority-card priority-good">
                     <p>Disponible gasto ordinario</p>
                     <h2>{formatCurrency(presupuestoOrdinarioDisponible)}</h2>
+                    <span className="card-note">AportaciÃ³n prevista menos gastos periÃ³dicos pendientes.</span>
                   </article>
 
-                  <article className={balanceAjustadoPreventivo >= 0 ? 'card good' : 'card bad'}>
+                  <article className={balanceAjustadoPreventivo >= 0 ? 'card good priority-card' : 'card bad priority-card'}>
                     <p>Balance ajustado preventivo</p>
                     <h2 className={balanceAjustadoPreventivoClass}>
                       {formatSignedCurrency(balanceAjustadoPreventivo)}
@@ -1691,18 +2035,18 @@ ${JSON.stringify(payload, null, 2)}`
                         <tbody>
                           {gastosPeriodicos.map((item, index) => (
                             <tr key={`${item.concepto}-${index}`}>
-                              <td className="category-name">{item.concepto}</td>
-                              <td>{item.quien}</td>
-                              <td>{formatCurrency(item.total)}</td>
-                              <td>
+                              <td className="category-name" data-label="Concepto">{item.concepto}</td>
+                              <td data-label="QuiÃ©n">{item.quien}</td>
+                              <td data-label="Total">{formatCurrency(item.total)}</td>
+                              <td data-label="Estado">
                                 <span className={`state-pill ${String(item.estado).toLowerCase() === 'ejecutado' ? 'state-ok' : 'state-warning'}`}>
                                   {item.estado ?? 'Pendiente'}
                                 </span>
                               </td>
-                              <td className={toNumber(item.importe_pendiente_dashboard) > 0 ? 'negative-text' : 'positive-text'}>
+                              <td data-label="Impacto pendiente" className={toNumber(item.importe_pendiente_dashboard) > 0 ? 'negative-text' : 'positive-text'}>
                                 {formatCurrency(item.importe_pendiente_dashboard)}
                               </td>
-                              <td>{formatCurrency(item.importe_dashboard)}</td>
+                              <td data-label="Impacto total">{formatCurrency(item.importe_dashboard)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -2324,11 +2668,11 @@ ${JSON.stringify(payload, null, 2)}`
         )}
 
         <CollapsibleSection
-          title="Render resumen familiar"
-          description="Genera un prompt para crear una hoja visual premium basada en el análisis IA."
+          title="Informes IA"
+          description="Genera prompts para que ChatGPT devuelva un PDF compacto listo para enviar."
           helpText={[
-            'Esta sección no añade más indicadores permanentes al dashboard. Prepara los datos y las instrucciones para que la IA detecte patrones, anomalías y recomendaciones.',
-            'El objetivo es análisis de valor añadido, no repetir la información visible en el dashboard.'
+            'No llama a ninguna API externa. Solo prepara un prompt completo para copiar y pegar manualmente.',
+            'Los informes deben interpretar, priorizar y recomendar acciones sin repetir simplemente los KPIs.'
           ]}
           open={openSections.analisisIA}
           onToggle={() => toggleSection('analisisIA')}
@@ -2336,21 +2680,28 @@ ${JSON.stringify(payload, null, 2)}`
           <section className="ai-analysis-section">
             <article className="ai-analysis-card">
               <div>
-                <h2>Preparar render familiar con IA</h2>
+                <h2>Generador de informes familiares</h2>
                 <p>
-                  Copia un prompt estructurado con los datos del periodo actual para pegarlo en ChatGPT.
-                  La IA analizará internamente los datos y generará directamente una hoja visual descargable,
-                  con estilo editorial premium, pensada para compartir con la familia.
+                  Crea un prompt con datos del periodo actual, diagnóstico de datos, categorías relevantes,
+                  histórico disponible y previsión del mes siguiente. Después pégalo manualmente en ChatGPT.
                 </p>
               </div>
 
               <div className="ai-actions">
-                <button type="button" className="filter-button" onClick={handleCopyAIPrompt}>
-                  Copiar prompt render
+                <button type="button" className="filter-button" onClick={() => handleGenerateInformeIA('mes')}>
+                  Prompt: Cómo va el mes
                 </button>
 
-                <button type="button" className="filter-button secondary" onClick={handleCopyAIJson}>
-                  Copiar JSON datos
+                <button type="button" className="filter-button" onClick={() => handleGenerateInformeIA('cierre')}>
+                  Prompt: Cierre de mes
+                </button>
+
+                <button type="button" className="filter-button secondary" onClick={handleTogglePromptIA} disabled={!iaPrompt}>
+                  {iaPromptOpen ? 'Ocultar prompt' : 'Ver prompt'}
+                </button>
+
+                <button type="button" className="filter-button secondary" onClick={handleDownloadPromptIA} disabled={!iaPrompt}>
+                  Descargar .md
                 </button>
               </div>
 
@@ -2361,14 +2712,27 @@ ${JSON.stringify(payload, null, 2)}`
               )}
             </article>
 
+            {iaPrompt && iaPromptOpen && (
+              <article className="ai-prompt-card">
+                <div className="table-header">
+                  <div>
+                    <h2>{iaPromptTitle}</h2>
+                    <p>Prompt listo para pegar en ChatGPT. No incluye datos personales de reparto interno.</p>
+                  </div>
+                </div>
+                <pre>{iaPrompt}</pre>
+              </article>
+            )}
+
             <article className="ai-guidance-card">
-              <h3>Qué debe condensar el render</h3>
+              <h3>Qué debe producir ChatGPT</h3>
               <ul>
-                <li>Lectura rápida del equilibrio real y del margen ajustado.</li>
-                <li>Focos de especial vigilancia sin saturar de datos.</li>
-                <li>Diferencia entre gasto ordinario, gasto periódico pendiente y posible gasto extraordinario.</li>
-                <li>Margen operativo útil y liquidez preventiva.</li>
-                <li>Dos o tres recomendaciones prácticas y priorizadas.</li>
+                <li>PDF descargable, compacto y apto para WhatsApp/email.</li>
+                <li>Resumen ejecutivo, semáforo del mes y prioridades.</li>
+                <li>Categorías o gastos que explican el resultado.</li>
+                <li>Recomendaciones prácticas sin lenguaje alarmista.</li>
+                <li>Previsión del mes siguiente con gastos periódicos y posible derrama.</li>
+                <li>Limitaciones de datos cuando falte información fiable.</li>
               </ul>
             </article>
           </section>

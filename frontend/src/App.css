@@ -490,6 +490,32 @@ h1 {
   background: linear-gradient(180deg, #ffffff 0%, #fff1f2 100%);
 }
 
+.priority-card {
+  position: relative;
+  border-width: 1.5px;
+}
+
+.priority-card h2 {
+  font-size: 30px;
+}
+
+.priority-good {
+  border-color: #86efac;
+}
+
+.priority-warning {
+  border-color: #fca5a5;
+}
+
+.card-note {
+  display: block;
+  margin-top: 10px;
+  color: #526b8e;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .alerts-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -975,15 +1001,33 @@ tbody tr.row-unknown td {
 
 @media (max-width: 650px) {
   .app {
-    padding: 18px;
+    padding: 14px;
   }
 
   .dashboard-header {
     flex-direction: column;
+    gap: 10px;
+    margin-bottom: 14px;
   }
 
   h1 {
-    font-size: 30px;
+    font-size: 28px;
+  }
+
+  .eyebrow {
+    margin-bottom: 5px;
+    font-size: 11px;
+  }
+
+  .subtitle {
+    margin-top: 6px;
+    font-size: 14px;
+  }
+
+  .status {
+    align-self: flex-start;
+    padding: 8px 13px;
+    font-size: 12px;
   }
 
   .cards-grid,
@@ -997,14 +1041,35 @@ tbody tr.row-unknown td {
     font-size: 24px;
   }
 
+  .priority-card h2 {
+    font-size: 28px;
+  }
+
+  .filters-card {
+    gap: 14px;
+    padding: 15px;
+    margin-bottom: 12px;
+    border-radius: 18px;
+  }
+
+  .filters-card h2 {
+    font-size: 18px;
+  }
+
+  .filters-card p {
+    font-size: 13px;
+  }
+
   .filters-form {
     flex-direction: column;
     align-items: stretch;
+    gap: 10px;
   }
 
   .filter-field select,
   .filter-button {
     width: 100%;
+    min-height: 44px;
   }
 
   .chart-card,
@@ -1029,6 +1094,25 @@ tbody tr.row-unknown td {
 
   .execution-cell {
     grid-template-columns: 54px minmax(80px, 1fr);
+  }
+
+  .collapsible-header {
+    padding: 14px 15px;
+    border-radius: 18px;
+  }
+
+  .collapsible-header h2 {
+    font-size: 19px;
+  }
+
+  .collapsible-header p {
+    font-size: 13px;
+  }
+
+  .collapsible-toggle {
+    min-width: auto;
+    padding: 7px 10px;
+    font-size: 12px;
   }
 }
 .media-section {
@@ -1259,6 +1343,82 @@ tbody tr.row-unknown td {
   .periodic-summary-grid {
     grid-template-columns: 1fr;
   }
+
+  .periodic-table-card .table-wrapper {
+    overflow-x: visible;
+  }
+
+  .periodic-table-card table,
+  .periodic-table-card thead,
+  .periodic-table-card tbody,
+  .periodic-table-card tr,
+  .periodic-table-card th,
+  .periodic-table-card td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .periodic-table-card table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .periodic-table-card thead {
+    display: none;
+  }
+
+  .periodic-table-card tbody {
+    display: grid;
+    gap: 12px;
+  }
+
+  .periodic-table-card tbody tr {
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    background: #ffffff;
+    padding: 12px;
+  }
+
+  .periodic-table-card td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 9px 0;
+    border-bottom: 1px solid #eef2f7;
+    text-align: right;
+    font-size: 14px;
+  }
+
+  .periodic-table-card td:first-child {
+    align-items: flex-start;
+    text-align: right;
+  }
+
+  .periodic-table-card td:last-child {
+    border-bottom: 0;
+  }
+
+  .periodic-table-card td::before {
+    content: attr(data-label);
+    flex: 0 0 42%;
+    color: #526b8e;
+    font-size: 11px;
+    font-weight: 900;
+    text-align: left;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .periodic-table-card .category-name {
+    color: #061733;
+    font-size: 15px;
+  }
+
+  .periodic-table-card .state-pill {
+    min-width: 0;
+  }
 }
 
 
@@ -1323,6 +1483,29 @@ tbody tr.row-unknown td {
   font-size: 15px;
   line-height: 1.7;
   font-weight: 700;
+}
+
+.ai-prompt-card {
+  margin-bottom: 18px;
+  background: #ffffff;
+  border: 1px solid #dbeafe;
+  border-radius: 24px;
+  padding: 20px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.07);
+}
+
+.ai-prompt-card pre {
+  max-height: 520px;
+  overflow: auto;
+  margin: 0;
+  border-radius: 16px;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 18px;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 @media (max-width: 800px) {
