@@ -403,6 +403,9 @@ const DATOS_DASHBOARD_MAPA_CATEGORIAS_MENSUAL_ = {
 };
 
 function actualizarDatosDashboardDesdeHojasMensuales() {
+  // Fuerza a Sheets a materializar los cambios y fórmulas pendientes antes de leer los resúmenes.
+  SpreadsheetApp.flush();
+
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const shDatos = getOrCreateSheet_(ss, 'Datos_Dashboard');
   const datos = shDatos.getDataRange().getValues();
@@ -617,70 +620,110 @@ function obtenerPeriodoDesdeNombreHojaMensual_(nombreHoja) {
 
 function leerResumenHojaMensualParaDatosDashboard_(sheet, periodo) {
   const datos = sheet.getDataRange().getValues();
-  const categorias = {};
-  let gastoTotal = null;
-  let ingresos = null;
-  let balance = null;
-  let resumenDetectado = false;
+  return extraerResumenMensualDatosDashboard_(datos, periodo, sheet.getName());
+}
 
-  datos.forEach(fila => {
-    const etiqueta = normalizarTexto_(fila[2]);
-    if (!etiqueta) return;
+function extraerResumenMensualDatosDashboard_(datos, periodo, nombreHoja) {
+  const anclasTotal = [];
 
-    const valor = numeroDatosDashboard_(fila[3]);
-
-    if (Object.prototype.hasOwnProperty.call(DATOS_DASHBOARD_MAPA_CATEGORIAS_MENSUAL_, etiqueta)) {
-      categorias[DATOS_DASHBOARD_MAPA_CATEGORIAS_MENSUAL_[etiqueta]] = valor;
-      resumenDetectado = true;
-      return;
-    }
-
-    if (etiqueta === 'GASTO TOTAL MES') {
-      gastoTotal = valor;
-      resumenDetectado = true;
-      return;
-    }
-
-    if (etiqueta === 'INGRESOS EN CUENTA') {
-      ingresos = valor;
-      resumenDetectado = true;
-      return;
-    }
-
-    if (etiqueta === 'BALANCE') {
-      balance = valor;
-      resumenDetectado = true;
+  datos.forEach((fila, indice) => {
+    if (normalizarTexto_(fila[2]) === 'GASTO TOTAL MES') {
+      anclasTotal.push(indice);
     }
   });
 
-  if (!resumenDetectado) return null;
+  if (anclasTotal.length === 0) return null;
 
-  const gastoCalculado = Object.keys(categorias)
-    .map(categoria => categorias[categoria])
-    .filter(valor => typeof valor === 'number')
-    .reduce((suma, valor) => suma + valor, 0);
+  // El resumen definitivo está al final de la hoja: categorías en C/D, total y,
+  // debajo del mismo bloque, ingresos y balance. Se ignoran coincidencias aisladas.
+  for (let a = anclasTotal.length - 1; a >= 0; a--) {
+    const filaTotal = anclasTotal[a];
+    const categorias = {};
+    const primeraFilaCategoria = Math.max(0, filaTotal - 20);
 
-  if (gastoTotal === null && gastoCalculado !== 0) {
-    gastoTotal = gastoCalculado;
+    for (let fila = filaTotal - 1; fila >= primeraFilaCategoria; fila--) {
+      const etiqueta = normalizarTexto_(datos[fila][2]);
+      const categoria = DATOS_DASHBOARD_MAPA_CATEGORIAS_MENSUAL_[etiqueta];
+
+      if (!categoria || Object.prototype.hasOwnProperty.call(categorias, categoria)) continue;
+
+      const valor = numeroDatosDashboard_(datos[fila][3]);
+      if (valor !== null) categorias[categoria] = redondearImporteDatosDashboard_(valor);
+    }
+
+    const categoriasCompletas = DATOS_DASHBOARD_CATEGORIAS_.every(categoria =>
+      Object.prototype.hasOwnProperty.call(categorias, categoria)
+    );
+
+    if (!categoriasCompletas) continue;
+
+    const gastoTotal = numeroDatosDashboard_(datos[filaTotal][3]);
+    let ingresos = null;
+    let balance = null;
+
+    for (let fila = filaTotal + 1; fila < Math.min(datos.length, filaTotal + 9); fila++) {
+      const etiqueta = normalizarTexto_(datos[fila][2]);
+      const valor = numeroDatosDashboard_(datos[fila][3]);
+
+      if (etiqueta === 'INGRESOS EN CUENTA') ingresos = valor;
+      if (etiqueta === 'BALANCE') balance = valor;
+    }
+
+    if (gastoTotal === null || ingresos === null || balance === null) continue;
+
+    const gastoTotalRedondeado = redondearImporteDatosDashboard_(gastoTotal);
+    const ingresosRedondeados = redondearImporteDatosDashboard_(ingresos);
+    const balanceRedondeado = redondearImporteDatosDashboard_(balance);
+    const gastoCalculado = redondearImporteDatosDashboard_(
+      DATOS_DASHBOARD_CATEGORIAS_
+        .map(categoria => categorias[categoria])
+        .reduce((suma, valor) => suma + valor, 0)
+    );
+    const balanceCalculado = redondearImporteDatosDashboard_(
+      ingresosRedondeados + gastoTotalRedondeado
+    );
+
+    if (Math.abs(gastoCalculado - gastoTotalRedondeado) > 0.01) {
+      throw new Error(
+        nombreHoja + ': el total del resumen (' + gastoTotalRedondeado +
+        ') no coincide con la suma de categorías (' + gastoCalculado + ').'
+      );
+    }
+
+    if (Math.abs(balanceCalculado - balanceRedondeado) > 0.01) {
+      throw new Error(
+        nombreHoja + ': el balance del resumen (' + balanceRedondeado +
+        ') no coincide con ingresos más gasto (' + balanceCalculado + ').'
+      );
+    }
+
+    return {
+      periodo,
+      categorias,
+      gastoTotal: gastoTotalRedondeado,
+      ingresos: ingresosRedondeados,
+      balance: balanceRedondeado,
+      mesConDatos:
+        Math.abs(gastoTotalRedondeado) > 0 ||
+        DATOS_DASHBOARD_CATEGORIAS_.some(categoria => Math.abs(categorias[categoria]) > 0),
+      resumenDetectado: true,
+      filaResumen: filaTotal + 1
+    };
   }
 
-  if (balance === null && ingresos !== null && gastoTotal !== null) {
-    balance = ingresos + gastoTotal;
-  }
+  // Las plantillas anteriores a 2026 no siempre contienen las siete categorías
+  // y los tres totales en el mismo bloque. Se conservan sus filas consolidadas
+  // existentes en vez de reinterpretarlas con una estructura que no les corresponde.
+  if (periodo && Number(periodo.anio) < 2026) return null;
 
-  const mesConDatos =
-    Math.abs(gastoTotal || 0) > 0 ||
-    Object.keys(categorias).some(categoria => Math.abs(categorias[categoria] || 0) > 0);
+  throw new Error(
+    nombreHoja +
+    ': se encontró GASTO TOTAL MES, pero no un bloque final completo y coherente de categorías, ingresos y balance.'
+  );
+}
 
-  return {
-    periodo,
-    categorias,
-    gastoTotal,
-    ingresos,
-    balance,
-    mesConDatos,
-    resumenDetectado
-  };
+function redondearImporteDatosDashboard_(valor) {
+  return Math.round(Number(valor) * 100) / 100;
 }
 
 function crearFilaVaciaDatosDashboard_(numCols) {
