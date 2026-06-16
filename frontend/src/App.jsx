@@ -976,11 +976,16 @@ function App() {
     (ingresoPrevistoGastosPeriodicos !== null
       ? ingresoPrevistoGastosPeriodicos - totalGastosPeriodicosPendientes
       : null)
+  const gastoRealNumero = toNumber(gastoTotal)
+  const margenOrdinarioRestante =
+    ingresoPrevistoGastosPeriodicos !== null && gastoRealNumero !== null
+      ? ingresoPrevistoGastosPeriodicos - gastoRealNumero - totalGastosPeriodicosPendientes
+      : null
   const porcentajeDisponibleConsumido =
-    presupuestoOrdinarioDisponible !== null &&
-    presupuestoOrdinarioDisponible > 0 &&
-    toNumber(gastoTotal) !== null
-      ? (toNumber(gastoTotal) / presupuestoOrdinarioDisponible) * 100
+    ingresoPrevistoGastosPeriodicos !== null &&
+    ingresoPrevistoGastosPeriodicos > 0 &&
+    gastoRealNumero !== null
+      ? ((gastoRealNumero + totalGastosPeriodicosPendientes) / ingresoPrevistoGastosPeriodicos) * 100
       : null
   const disponibleClass =
     porcentajeDisponibleConsumido === null
@@ -992,9 +997,7 @@ function App() {
           : 'variation-positive'
 
   const balanceAjustadoPreventivo =
-    toNumber(balanceMesCalculado) !== null
-      ? toNumber(balanceMesCalculado) - totalGastosPeriodicosPendientes
-      : null
+    margenOrdinarioRestante
 
   const balanceAjustadoPreventivoClass =
     balanceAjustadoPreventivo === null
@@ -1984,37 +1987,36 @@ ${JSON.stringify(payload, null, 2)}
               <section className="periodic-section">
                 <div className="periodic-summary-grid">
                   <article className="card priority-card">
-                    <CardLabel help="Dinero previsto para el mes en el fondo común familiar.">
+                    <CardLabel help="Dinero disponible en el fondo comun familiar para el mes.">
                       Aportación prevista
                     </CardLabel>
                     <h2>{formatCurrency(ingresoPrevistoGastosPeriodicos)}</h2>
                   </article>
 
+                  <article className="card priority-card">
+                    <CardLabel help="Gasto comun ya registrado en el mes. Incluye los gastos periodicos que ya se han ejecutado.">
+                      Gasto real registrado
+                    </CardLabel>
+                    <h2>{formatCurrency(gastoRealNumero)}</h2>
+                  </article>
+
                   <article className={totalGastosPeriodicosPendientes > 0 ? 'card bad priority-card priority-warning' : 'card good priority-card'}>
-                    <CardLabel help="Gastos comunes previstos para este mes que aún no se han ejecutado. Reducen el margen real disponible.">
+                    <CardLabel help="Gastos periodicos comunes del mes que todavia no se han pagado. Se reservan porque todavia reduciran el margen disponible.">
                       Gastos periódicos pendientes
                     </CardLabel>
                     <h2>{formatCurrency(totalGastosPeriodicosPendientes)}</h2>
                   </article>
 
                   <article className="card">
-                    <CardLabel help="Gastos periódicos del mes que ya se han pagado. Ya están absorbidos en el gasto real y no se restan otra vez.">
+                    <CardLabel help="Gastos periodicos del mes ya pagados. Ya estan incluidos en el gasto real, por eso no se descuentan otra vez.">
                       Ya ejecutados
                     </CardLabel>
                     <h2>{formatCurrency(totalGastosPeriodicosEjecutados)}</h2>
                   </article>
 
-                  <article className="card good priority-card priority-good">
-                    <CardLabel help="Aportación prevista menos gastos periódicos pendientes. Indica el margen real para el gasto normal del mes.">
-                      Disponible gasto ordinario
-                    </CardLabel>
-                    <h2>{formatCurrency(presupuestoOrdinarioDisponible)}</h2>
-                    <span className="card-note">AportaciÃ³n prevista menos gastos periÃ³dicos pendientes.</span>
-                  </article>
-
                   <article className={balanceAjustadoPreventivo >= 0 ? 'card good priority-card' : 'card bad priority-card'}>
-                    <CardLabel help="Balance del mes descontando los gastos periódicos pendientes. Sirve como aviso anticipado.">
-                      Balance ajustado preventivo
+                    <CardLabel help="Dinero que queda realmente disponible para gasto corriente despues de restar el gasto ya realizado y reservar los gastos periodicos pendientes.">
+                      Margen ordinario restante
                     </CardLabel>
                     <h2 className={balanceAjustadoPreventivoClass}>
                       {formatSignedCurrency(balanceAjustadoPreventivo)}
@@ -2022,8 +2024,8 @@ ${JSON.stringify(payload, null, 2)}
                   </article>
 
                   <article className="card">
-                    <CardLabel help="Porcentaje del margen ordinario disponible que ya se ha consumido.">
-                      Uso del disponible
+                    <CardLabel help="Porcentaje de la aportacion prevista ya comprometido entre gasto real registrado y gastos periodicos pendientes.">
+                      Uso preventivo del disponible
                     </CardLabel>
                     <h2 className={disponibleClass}>{formatPercent(porcentajeDisponibleConsumido)}</h2>
                   </article>
@@ -2155,37 +2157,36 @@ ${JSON.stringify(payload, null, 2)}
               <section className="periodic-section">
                 <div className="periodic-summary-grid">
                   <article className="card priority-card">
-                    <CardLabel help="Dinero previsto para el mes en el fondo común familiar.">
+                    <CardLabel help="Dinero disponible en el fondo comun familiar para el mes.">
                       Aportación prevista
                     </CardLabel>
                     <h2>{formatCurrency(ingresoPrevistoGastosPeriodicos)}</h2>
                   </article>
 
+                  <article className="card priority-card">
+                    <CardLabel help="Gasto comun ya registrado en el mes. Incluye los gastos periodicos que ya se han ejecutado.">
+                      Gasto real registrado
+                    </CardLabel>
+                    <h2>{formatCurrency(gastoRealNumero)}</h2>
+                  </article>
+
                   <article className={totalGastosPeriodicosPendientes > 0 ? 'card bad priority-card priority-warning' : 'card good priority-card'}>
-                    <CardLabel help="Gastos comunes previstos para este mes que aún no se han ejecutado. Reducen el margen real disponible.">
+                    <CardLabel help="Gastos periodicos comunes del mes que todavia no se han pagado. Se reservan porque todavia reduciran el margen disponible.">
                       Gastos periódicos pendientes
                     </CardLabel>
                     <h2>{formatCurrency(totalGastosPeriodicosPendientes)}</h2>
                   </article>
 
                   <article className="card">
-                    <CardLabel help="Gastos periódicos del mes que ya se han pagado. Ya están absorbidos en el gasto real y no se restan otra vez.">
+                    <CardLabel help="Gastos periodicos del mes ya pagados. Ya estan incluidos en el gasto real, por eso no se descuentan otra vez.">
                       Ya ejecutados
                     </CardLabel>
                     <h2>{formatCurrency(totalGastosPeriodicosEjecutados)}</h2>
                   </article>
 
-                  <article className="card good priority-card priority-good">
-                    <CardLabel help="Aportación prevista menos gastos periódicos pendientes. Indica el margen real para el gasto normal del mes.">
-                      Disponible gasto ordinario
-                    </CardLabel>
-                    <h2>{formatCurrency(presupuestoOrdinarioDisponible)}</h2>
-                    <span className="card-note">AportaciÃ³n prevista menos gastos periÃ³dicos pendientes.</span>
-                  </article>
-
                   <article className={balanceAjustadoPreventivo >= 0 ? 'card good priority-card' : 'card bad priority-card'}>
-                    <CardLabel help="Balance del mes descontando los gastos periódicos pendientes. Sirve como aviso anticipado.">
-                      Balance ajustado preventivo
+                    <CardLabel help="Dinero que queda realmente disponible para gasto corriente despues de restar el gasto ya realizado y reservar los gastos periodicos pendientes.">
+                      Margen ordinario restante
                     </CardLabel>
                     <h2 className={balanceAjustadoPreventivoClass}>
                       {formatSignedCurrency(balanceAjustadoPreventivo)}
@@ -2193,8 +2194,8 @@ ${JSON.stringify(payload, null, 2)}
                   </article>
 
                   <article className="card">
-                    <CardLabel help="Porcentaje del margen ordinario disponible que ya se ha consumido.">
-                      Uso del disponible
+                    <CardLabel help="Porcentaje de la aportacion prevista ya comprometido entre gasto real registrado y gastos periodicos pendientes.">
+                      Uso preventivo del disponible
                     </CardLabel>
                     <h2 className={disponibleClass}>{formatPercent(porcentajeDisponibleConsumido)}</h2>
                   </article>
