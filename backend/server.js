@@ -7,10 +7,16 @@ const { google } = require('googleapis');
 
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+const configuredCorsOrigins = process.env.CORS_ORIGIN
+  ?.split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(cors(configuredCorsOrigins?.length ? { origin: configuredCorsOrigins } : undefined));
+app.use(express.json({ limit: '100kb' }));
 
 const PORT = process.env.PORT || 3001;
+let sheetsClientPromise = null;
 
 const MONTH_SHEET_NAMES = [
   'ENERO',
@@ -242,15 +248,21 @@ function sheetRange(sheetName, range) {
 }
 
 async function getSheetsClient() {
-  const auth = new google.auth.GoogleAuth({
-    keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-  });
+  if (!sheetsClientPromise) {
+    sheetsClientPromise = Promise.resolve().then(() => {
+      const auth = new google.auth.GoogleAuth({
+        keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+      });
 
-  return google.sheets({
-    version: 'v4',
-    auth,
-  });
+      return google.sheets({
+        version: 'v4',
+        auth,
+      });
+    });
+  }
+
+  return sheetsClientPromise;
 }
 
 async function readSheet(range) {
@@ -274,6 +286,24 @@ function sendApiError(res, status, message) {
 function handleEndpointError(res, error, clientMessage) {
   console.error(error);
   return sendApiError(res, 500, clientMessage);
+}
+
+function validateRuntimeConfig() {
+  const missingVariables = [
+    'GOOGLE_APPLICATION_CREDENTIALS',
+    'SPREADSHEET_ID',
+  ].filter((name) => !process.env[name]?.trim());
+
+  if (missingVariables.length > 0) {
+    throw new Error(
+      `Faltan variables de entorno obligatorias: ${missingVariables.join(', ')}`
+    );
+  }
+
+  const portNumber = Number(PORT);
+  if (!Number.isInteger(portNumber) || portNumber < 1 || portNumber > 65535) {
+    throw new Error('PORT debe ser un puerto TCP válido');
+  }
 }
 
 function validateOptionalYear(value) {
@@ -1048,6 +1078,10 @@ function diagnoseCrossSheetConsistency(diagnostico, resumenFiltrado, dashboardFi
   );
 }
 
+app.get('/api/health', (req, res) => {
+  res.json({ success: true, service: 'gastos-dashboard' });
+});
+
 app.get('/api/resumen', async (req, res) => {
   try {
     const rows = await readSheet('API_Resumen!A:Z');
@@ -1414,11 +1448,17 @@ app.get('/api/app-state', async (req, res) => {
 
 const frontendPath = path.join(__dirname, "../frontend/dist");
 
+app.use('/api', (req, res) => {
+  return sendApiError(res, 404, 'Ruta API no encontrada');
+});
+
 app.use(express.static(frontendPath));
 
 app.use((req, res) => {
   res.sendFile(path.join(frontendPath, "index.html"));
 });
+
+validateRuntimeConfig();
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Servidor dashboard activo en http://0.0.0.0:${PORT}`);

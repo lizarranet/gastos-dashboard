@@ -16,6 +16,9 @@ import {
 } from 'recharts'
 import './App.css'
 
+const EMPTY_ARRAY = Object.freeze([])
+const EMPTY_OBJECT = Object.freeze({})
+
 function getApiBaseUrl() {
   const configuredUrl = import.meta.env.VITE_API_BASE_URL?.trim()
 
@@ -650,7 +653,7 @@ function App() {
   const [iaPromptTitle, setIaPromptTitle] = useState('')
   const [iaPromptOpen, setIaPromptOpen] = useState(false)
 
-  function fetchAppState(anioFiltro, mesFiltro) {
+  function fetchAppState(anioFiltro, mesFiltro, signal) {
     setLoading(true)
     setError(null)
 
@@ -660,41 +663,43 @@ function App() {
     if (mesFiltro) params.mes = mesFiltro
 
     axios
-      .get(API_URL, { params })
+      .get(API_URL, { params, signal })
       .then((response) => {
         setData(response.data)
         setSelectedAnio(response.data.filtros?.anio ?? '')
         setSelectedMes(response.data.filtros?.mes ?? '')
       })
       .catch((error) => {
+        if (axios.isCancel(error)) return
         console.error(error)
         setError('No se pudo cargar el dashboard. Revisa que el backend esté arrancado.')
       })
       .finally(() => {
-        setLoading(false)
+        if (!signal?.aborted) setLoading(false)
       })
   }
 
-  function fetchMediasCategoria(anioFiltro) {
+  function fetchMediasCategoria(anioFiltro, signal) {
     if (!anioFiltro) return
 
     setMediasLoading(true)
 
     axios
-      .get(MEDIAS_CATEGORIA_URL, { params: { anio: anioFiltro } })
+      .get(MEDIAS_CATEGORIA_URL, { params: { anio: anioFiltro }, signal })
       .then((response) => {
         setMediasCategoria(response.data?.data ?? [])
       })
       .catch((error) => {
+        if (axios.isCancel(error)) return
         console.error(error)
         setMediasCategoria([])
       })
       .finally(() => {
-        setMediasLoading(false)
+        if (!signal?.aborted) setMediasLoading(false)
       })
   }
 
-  function fetchDiagnosticoDatos(anioFiltro, mesFiltro) {
+  function fetchDiagnosticoDatos(anioFiltro, mesFiltro, signal) {
     if (!anioFiltro && !mesFiltro) return
 
     const params = {}
@@ -706,70 +711,80 @@ function App() {
     setDiagnosticoError(false)
 
     axios
-      .get(DIAGNOSTICO_DATOS_URL, { params })
+      .get(DIAGNOSTICO_DATOS_URL, { params, signal })
       .then((response) => {
         setDiagnostico(response.data?.diagnostico ?? null)
       })
       .catch((error) => {
+        if (axios.isCancel(error)) return
         console.error(error)
         setDiagnostico(null)
         setDiagnosticoError(true)
       })
       .finally(() => {
-        setDiagnosticoLoading(false)
+        if (!signal?.aborted) setDiagnosticoLoading(false)
       })
   }
 
-  function fetchGastosPeriodicosSiguiente(mesFiltro) {
+  function fetchGastosPeriodicosSiguiente(mesFiltro, signal) {
     const mesNumero = toNumber(mesFiltro)
     if (!mesNumero) return
 
     const mesSiguiente = mesNumero === 12 ? 1 : mesNumero + 1
 
     axios
-      .get(GASTOS_PERIODICOS_URL, { params: { mes: mesSiguiente } })
+      .get(GASTOS_PERIODICOS_URL, { params: { mes: mesSiguiente }, signal })
       .then((response) => {
         setGastosPeriodicosSiguiente(response.data ?? null)
       })
       .catch((error) => {
+        if (axios.isCancel(error)) return
         console.error(error)
         setGastosPeriodicosSiguiente(null)
       })
   }
 
   useEffect(() => {
+    const controller = new AbortController()
     const targetPeriod = getCurrentDashboardPeriod()
 
     if (targetPeriod) {
-      fetchAppState(targetPeriod.year, targetPeriod.month)
-      return
+      fetchAppState(targetPeriod.year, targetPeriod.month, controller.signal)
+    } else {
+      fetchAppState(undefined, undefined, controller.signal)
     }
 
-    fetchAppState()
+    return () => controller.abort()
   }, [])
 
   useEffect(() => {
+    const controller = new AbortController()
     const anio = data?.filtros?.anio
-    if (anio) fetchMediasCategoria(anio)
+    if (anio) fetchMediasCategoria(anio, controller.signal)
+    return () => controller.abort()
   }, [data?.filtros?.anio])
 
   useEffect(() => {
+    const controller = new AbortController()
     const anio = data?.filtros?.anio
     const mes = data?.filtros?.mes
-    if (anio || mes) fetchDiagnosticoDatos(anio, mes)
+    if (anio || mes) fetchDiagnosticoDatos(anio, mes, controller.signal)
+    return () => controller.abort()
   }, [data?.filtros?.anio, data?.filtros?.mes])
 
   useEffect(() => {
+    const controller = new AbortController()
     const mes = data?.filtros?.mes
-    if (mes) fetchGastosPeriodicosSiguiente(mes)
+    if (mes) fetchGastosPeriodicosSiguiente(mes, controller.signal)
+    return () => controller.abort()
   }, [data?.filtros?.mes])
 
-  const dashboard = data?.dashboard ?? []
-  const resumen = data?.resumen ?? []
-  const primeraFila = dashboard[0] ?? {}
-  const metadata = data?.metadata ?? {}
-  const gastosPeriodicos = data?.gastosPeriodicos ?? []
-  const gastosPeriodicosResumen = data?.gastosPeriodicosResumen ?? {}
+  const dashboard = data?.dashboard ?? EMPTY_ARRAY
+  const resumen = data?.resumen ?? EMPTY_ARRAY
+  const primeraFila = dashboard[0] ?? EMPTY_OBJECT
+  const metadata = data?.metadata ?? EMPTY_OBJECT
+  const gastosPeriodicos = data?.gastosPeriodicos ?? EMPTY_ARRAY
+  const gastosPeriodicosResumen = data?.gastosPeriodicosResumen ?? EMPTY_OBJECT
   const gastosPeriodicosPorCategoria = useMemo(() => {
     const resumenCategorias =
       data?.gastosPeriodicosPorCategoria ??
@@ -1760,7 +1775,7 @@ ${JSON.stringify(payload, null, 2)}
     try {
       await navigator.clipboard.writeText(text)
       setAiCopyStatus(successMessage)
-    } catch (error) {
+    } catch {
       const textarea = document.createElement('textarea')
       textarea.value = text
       textarea.setAttribute('readonly', '')
@@ -1774,20 +1789,6 @@ ${JSON.stringify(payload, null, 2)}
     }
 
     window.setTimeout(() => setAiCopyStatus(''), 3500)
-  }
-
-  function handleCopyAIPrompt() {
-    copyToClipboard(
-      buildAnalisisIAPrompt(),
-      'Prompt de análisis IA copiado'
-    )
-  }
-
-  function handleCopyAIJson() {
-    copyToClipboard(
-      JSON.stringify(buildAnalisisIAPayload(), null, 2),
-      'Datos JSON para IA copiados'
-    )
   }
 
   function handleGenerateInformeIA(tipoInforme) {

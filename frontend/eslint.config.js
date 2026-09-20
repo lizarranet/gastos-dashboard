@@ -17,5 +17,12 @@ export default defineConfig([
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    rules: {
+      // Estas llamadas sincronizan el componente con la API; React admite este patrón
+      // siempre que las respuestas se limpien o cancelen al desmontar.
+      'react-hooks/set-state-in-effect': 'off',
+      // El generador visual se conserva para una reactivación próxima de su botón.
+      'no-unused-vars': ['error', { varsIgnorePattern: '^buildAnalisisIAPrompt$' }],
+    },
   },
 ])
